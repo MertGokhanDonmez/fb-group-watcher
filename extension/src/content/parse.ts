@@ -1,8 +1,9 @@
 import type { ParseStats, RawPost } from '../../../shared/protocol.ts';
-import { extractPostId } from '../../../shared/protocol.ts';
 import {
   AUTHOR_LINK_PATTERNS,
   COMMENT_LINK_PATTERN,
+  GROUP_IN_HREF_PATTERN,
+  POST_ID_PATTERNS,
   POST_LINK_PATTERNS,
   SELECTORS,
   matchesAny,
@@ -11,6 +12,29 @@ import {
 } from './selectors.ts';
 
 /* ---------- Metin cikarma ---------- */
+
+/**
+ * Ekranda GORUNMEYEN tuzak metin mi?
+ *
+ * Facebook zaman damgasi ve baglanti onizlemelerinde kazima karsiti bir numara
+ * kullaniyor: gercek karakterlerin arasina yuzlerce sahte harf serpiyor ve
+ * sahtelerini `position: absolute; top: 3em` ile ekran disina itiyor. Ham
+ * textContent okunursa "8h" yerine "nSsotoedrph00hlammic0amu56t8f06g388t56c999h4mt5i332l110 6"
+ * gibi bir cop cikiyor.
+ *
+ * Iki isaret de yapisal: aria-hidden erisilebilirlik agacindan cikarilmis her seyi,
+ * inline `position: absolute` ise akistan cikarilmis tuzaklari eler. Sinif ismine
+ * dayanmiyoruz - onlar zaten her derlemede degisiyor.
+ */
+function isHiddenDecoy(element: Element): boolean {
+  if (element.getAttribute('aria-hidden') === 'true') return true;
+  if (element.hasAttribute('hidden')) return true;
+  const style = element.getAttribute('style') ?? '';
+  return /position:\s*absolute/i.test(style);
+}
+
+/** Tuzak metne serpistirilen gorunmez birlestiriciler ve sifir genislikli karakterler. */
+const INVISIBLE_CHARS = /[͏​-‍⁠﻿]/g;
 
 /**
  * innerText tarayiciya bagli ve test ortamlarinda yok; textContent ise satirlari
@@ -35,6 +59,7 @@ export function readableText(node: Node): string {
       return;
     }
     if (tag === 'script' || tag === 'style') return;
+    if (isHiddenDecoy(element)) return;
 
     for (const child of Array.from(element.childNodes)) walk(child);
 
@@ -46,6 +71,7 @@ export function readableText(node: Node): string {
   walk(node);
   return parts
     .join('')
+    .replace(INVISIBLE_CHARS, '')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
@@ -84,7 +110,18 @@ export function parseRelativeTimeLabel(label: string, now: number = Date.now()):
   if (/(şimdi|simdi|az önce|az once|just now|now)/.test(text)) return now;
   if (/(dün|dun|yesterday)/.test(text)) return now - 86_400_000;
 
-  const match = text.match(/(\d+)\s*([a-zçğıöşü]+)/);
+  /*
+   * Karakterlerin GORSEL sirasi da karistiriliyor: DOM'da "h19" duran etiket
+   * ekranda "19h" gorunur (Facebook sirayi flex `order` ile veriyor). Stylesheet
+   * icerik script'inin elinde olmadigi icin sirayi CSS'ten okuyamayiz - ama goreli
+   * zaman etiketi her dilde <sayi><birim> duzenindedir, birim basa gecmisse
+   * siralama bozulmus demektir. Yanlis pozitif riski dusuk: "aug 19" gibi bir
+   * metin ters cevrilse bile "aug" bilinen bir birim degil, sonuc yine null.
+   */
+  const scrambled = text.match(/^([a-zçğıöşü]+)\s*(\d+)$/);
+  const normalized = scrambled ? `${scrambled[2]}${scrambled[1]}` : text;
+
+  const match = normalized.match(/(\d+)\s*([a-zçğıöşü]+)/);
   if (!match) return null;
   const amount = Number(match[1]);
   const unit = match[2] ?? '';
@@ -111,41 +148,80 @@ function absoluteUrl(href: string): string {
   }
 }
 
-/** Permalink'i takip parametrelerinden arindirip kanonik hale getirir. */
-function cleanPermalink(href: string): string {
-  const url = new URL(absoluteUrl(href));
-  const postMatch = url.pathname.match(/\/groups\/([^/]+)\/(posts|permalink)\/(\d+)/);
-  if (postMatch) {
-    return `https://www.facebook.com/groups/${postMatch[1]}/posts/${postMatch[3]}/`;
-  }
-  const multi = url.searchParams.get('multi_permalinks');
-  const groupMatch = url.pathname.match(/\/groups\/([^/]+)/);
-  if (multi && groupMatch) {
-    return `https://www.facebook.com/groups/${groupMatch[1]}/posts/${multi}/`;
-  }
-  url.hash = '';
-  return url.toString();
+/**
+ * Dugum bu gonderiye mi ait, yoksa altindaki bir yoruma mi?
+ *
+ * Eskiden gonderi de yorum da role="article" tasidigi icin `closest('[role=article]')`
+ * karsilastirmasi yetiyordu. Artik gonderide o attribute yok, dolayisiyla ayni
+ * karsilastirma HER yorumu "gonderiye ait" sayardi. Bunun yerine dugumle kapsayici
+ * arasinda bir yorum sinirinin bulunup bulunmadigina bakiyoruz.
+ */
+function insideNestedComment(node: Element, container: HTMLElement): boolean {
+  const comment = node.closest<HTMLElement>(SELECTORS.comment.join(','));
+  return comment != null && comment !== container && container.contains(comment);
 }
 
-function findPostLink(article: HTMLElement): HTMLAnchorElement | null {
-  const anchors = Array.from(article.querySelectorAll<HTMLAnchorElement>('a[href]'));
+/** Kapsayiciya ait (yorumlarin icinde olmayan) baglantilar. */
+function ownAnchors(container: HTMLElement): HTMLAnchorElement[] {
+  return Array.from(container.querySelectorAll<HTMLAnchorElement>('a[href]')).filter(
+    (anchor) => !insideNestedComment(anchor, container),
+  );
+}
+
+interface PostRef {
+  fbPostId: string;
+  /** Href'ten okunabildiyse grup slug/id'si; okunamazsa null. */
+  groupFromHref: string | null;
+}
+
+/**
+ * Gonderi kimligini kapsayicidaki HERHANGI bir baglantidan cikarir.
+ *
+ * Onem sirasi yok: hangi kalip once eslesirse o. Yorum kalici baglantilari da
+ * kabul edilir - `/groups/<g>/posts/<id>/?comment_id=<c>` adresinde YOL gonderiyi
+ * tanimlar, comment_id yalnizca o gonderi icindeki yorumu. Fotograf baglantilarindaki
+ * `set=pcb.<id>` de ayni gonderiye isaret eder.
+ */
+function findPostRef(container: HTMLElement): PostRef | null {
+  const anchors = Array.from(container.querySelectorAll<HTMLAnchorElement>('a[href]'));
   for (const anchor of anchors) {
-    // Yorumlar ic ice article olarak gelir; sadece bu gonderiye ait linkleri al.
-    if (anchor.closest('[role="article"]') !== article) continue;
     const href = anchor.getAttribute('href') ?? '';
-    // comment_id tasiyan link yorumun kalici baglantisidir; zaman damgasi ve
-    // permalink yanlis secilmesin diye gonderi linki olarak kabul edilmez.
-    if (COMMENT_LINK_PATTERN.test(href)) continue;
-    if (matchesAny(href, POST_LINK_PATTERNS)) return anchor;
+    for (const pattern of POST_ID_PATTERNS) {
+      const match = href.match(pattern);
+      if (match?.[1]) {
+        return { fbPostId: match[1], groupFromHref: href.match(GROUP_IN_HREF_PATTERN)?.[1] ?? null };
+      }
+    }
   }
   return null;
 }
 
-function findAuthorLink(article: HTMLElement, postLink: HTMLAnchorElement | null): HTMLAnchorElement | null {
-  const anchors = Array.from(article.querySelectorAll<HTMLAnchorElement>('a[href]'));
-  for (const anchor of anchors) {
-    if (anchor === postLink) continue;
-    if (anchor.closest('[role="article"]') !== article) continue;
+/**
+ * Gonderinin kendi zaman damgasi baglantisi.
+ *
+ * Href'e guvenemiyoruz (artik yalnizca sifreli `__cft__` blogu tasiyor), bu yuzden
+ * ICERIKTEN gidiyoruz: yoruma ait olmayan, kisa ve goreli zamana cozulebilen metni
+ * olan ilk baglanti. Tuzak karakterler readableText icinde zaten eleniyor.
+ */
+function findTimeLink(container: HTMLElement, now: number): HTMLAnchorElement | null {
+  for (const anchor of ownAnchors(container)) {
+    const href = anchor.getAttribute('href') ?? '';
+    if (COMMENT_LINK_PATTERN.test(href)) continue;
+    const label = readableText(anchor).trim();
+    if (label.length === 0 || label.length > 16) continue;
+    if (parseRelativeTimeLabel(label, now) !== null) return anchor;
+  }
+  return null;
+}
+
+function findAuthorLink(container: HTMLElement): HTMLAnchorElement | null {
+  // Once yazar blogu: Facebook'un kendi isaretlemesi, tahmine gerek birakmiyor.
+  const block = queryFirst(container, SELECTORS.authorBlock);
+  const candidates = block && !insideNestedComment(block, container)
+    ? Array.from(block.querySelectorAll<HTMLAnchorElement>('a[href]'))
+    : ownAnchors(container);
+
+  for (const anchor of candidates) {
     const href = anchor.getAttribute('href') ?? '';
     if (matchesAny(href, POST_LINK_PATTERNS)) continue;
     if (!matchesAny(absoluteUrl(href), AUTHOR_LINK_PATTERNS)) continue;
@@ -157,15 +233,14 @@ function findAuthorLink(article: HTMLElement, postLink: HTMLAnchorElement | null
   return null;
 }
 
-function extractMessage(article: HTMLElement, authorLink: HTMLAnchorElement | null): string {
-  const direct = queryFirst(article, SELECTORS.message);
-  if (direct) return readableText(direct);
+function extractMessage(container: HTMLElement, authorLink: HTMLAnchorElement | null): string {
+  const direct = queryFirst(container, SELECTORS.message);
+  if (direct && !insideNestedComment(direct, container)) return readableText(direct);
 
   // Yedek strateji: gonderiye ait en uzun metin blogu.
-  // Yorumlar ic ice article oldugu icin closest kontroluyle eleniyor.
   let best = '';
-  for (const node of Array.from(article.querySelectorAll<HTMLElement>('div[dir="auto"]'))) {
-    if (node.closest('[role="article"]') !== article) continue;
+  for (const node of Array.from(container.querySelectorAll<HTMLElement>('div[dir="auto"]'))) {
+    if (insideNestedComment(node, container)) continue;
     if (authorLink && node.contains(authorLink)) continue;
     const text = readableText(node);
     if (text.length > best.length) best = text;
@@ -173,16 +248,16 @@ function extractMessage(article: HTMLElement, authorLink: HTMLAnchorElement | nu
   return best;
 }
 
-function extractImages(article: HTMLElement, authorLink: HTMLAnchorElement | null): string[] {
+function extractImages(container: HTMLElement, authorLink: HTMLAnchorElement | null): string[] {
   const urls: string[] = [];
-  for (const img of Array.from(article.querySelectorAll<HTMLImageElement>('img[src]'))) {
-    if (img.closest('[role="article"]') !== article) continue;
+  for (const img of Array.from(container.querySelectorAll<HTMLImageElement>('img[src]'))) {
+    if (insideNestedComment(img, container)) continue;
     // Profil fotograflari yazar linkinin icinde durur; urun gorseli degildir.
     if (authorLink && authorLink.contains(img)) continue;
     const src = img.getAttribute('src') ?? '';
     if (!src.startsWith('https://')) continue;
     const width = Number(img.getAttribute('width') ?? img.width ?? 0);
-    // Kucuk gorseller avatar/rozet; urun fotografi degil.
+    // Kucuk gorseller avatar/rozet/emoji; urun fotografi degil.
     if (width > 0 && width < 100) continue;
     if (!urls.includes(src)) urls.push(src);
   }
@@ -208,20 +283,22 @@ export function parseArticle(
   fbGroupId: string,
   now: number = Date.now(),
 ): RawPost | null {
-  const postLink = findPostLink(article);
-  if (!postLink) return null;
+  const ref = findPostRef(article);
+  if (!ref) return null;
 
-  const permalink = cleanPermalink(postLink.getAttribute('href') ?? '');
-  const fbPostId = extractPostId(permalink);
-  if (!fbPostId) return null;
+  // Permalink'i id + grup'tan kendimiz kuruyoruz: elimizdeki href bir yorum ya da
+  // fotograf baglantisi olabilir, oldugu gibi saklanirsa yanlis yere goturur.
+  const group = ref.groupFromHref ?? fbGroupId;
+  const permalink = `https://www.facebook.com/groups/${group}/posts/${ref.fbPostId}/`;
 
-  const authorLink = findAuthorLink(article, postLink);
+  const authorLink = findAuthorLink(article);
   const authorHref = authorLink?.getAttribute('href') ?? null;
-  const postedAtLabel = readableText(postLink).trim() || null;
+  const timeLink = findTimeLink(article, now);
+  const postedAtLabel = timeLink ? readableText(timeLink).trim() || null : null;
 
   return {
     source: 'feed',
-    fbPostId,
+    fbPostId: ref.fbPostId,
     fbGroupId,
     permalink,
     authorName: authorLink ? readableText(authorLink) : null,
@@ -241,10 +318,18 @@ export function parseFeed(
   now: number = Date.now(),
 ): { posts: RawPost[]; stats: ParseStats } {
   const feed = queryFirst(root, SELECTORS.feed) ?? (root as unknown as HTMLElement);
-  const articles = queryAll(feed, SELECTORS.article).filter(
-    // Yorumlar da role="article"; sadece en dis seviyedeki gonderileri al.
-    (article) => article.parentElement?.closest('[role="article"]') == null,
-  );
+  const articles = queryAll(feed, SELECTORS.article)
+    // Ic ice kapsayicilarda yalnizca en distakini al.
+    .filter((article) => article.parentElement?.closest(SELECTORS.article.join(',')) == null)
+    /*
+     * Sanallastirilmis (henuz render edilmemis) yuvalari ele.
+     *
+     * Facebook ekran disindaki gonderileri yalnizca yer tutucu bir kutu olarak
+     * birakiyor: kapsayici ve aria-posinset var, icerik yok. Bunlari "ayristirilamadi"
+     * saymak selector saglik alarmini surekli tetikler ve gercek bir bozulmayi
+     * gurultunun icinde kaybederdik. Metni olmayan kutu bozuk degil, henuz bos.
+     */
+    .filter((article) => readableText(article).length > 0);
 
   const posts: RawPost[] = [];
   let failures = 0;

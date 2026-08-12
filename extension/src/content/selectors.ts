@@ -14,15 +14,36 @@ export const SELECTORS = {
   /** Grup akisinin kapsayicisi. */
   feed: ['div[role="feed"]'],
 
-  /** Tek bir gonderi. */
-  article: ['div[role="article"]'],
+  /**
+   * Tek bir gonderinin kapsayicisi.
+   *
+   * Agustos 2026: Facebook gonderilerden role="article" kaldirdi. Artik YALNIZCA
+   * yorumlar role="article" tasiyor; gonderiler feed icinde aria-posinset ile
+   * numaralandirilmis kapsayicilarda duruyor. Eski yapi yedek olarak birakildi -
+   * bildirim sayfasi hala role="article" kullanabiliyor.
+   */
+  article: ['div[aria-posinset]', 'div[role="article"]'],
 
-  /** Gonderi metni. data-ad-* attribute'lari sinif isimlerinden cok daha kararli. */
+  /**
+   * Gonderi metni. data-ad-* attribute'lari sinif isimlerinden cok daha kararli.
+   * story_message en genis kapsayici: data-ad-preview yalnizca bazi gonderi
+   * turlerinde bulunuyor (fotografli evet, dis baglanti eklentili hayir).
+   */
   message: [
+    'div[data-ad-rendering-role="story_message"]',
     'div[data-ad-preview="message"]',
     'div[data-ad-comet-preview="message"]',
     'div[data-testid="post_message"]',
   ],
+
+  /** Yazar adinin durdugu blok. Icindeki ilk profil linki yazardir. */
+  authorBlock: ['div[data-ad-rendering-role="profile_name"]'],
+
+  /**
+   * Ic ice gecmis yorum. Gonderiye ait alanlar aranirken atlanir; yorum metni
+   * gonderi metni, yorum yazari gonderi yazari sanilmamali.
+   */
+  comment: ['[role="article"]', '[data-commentid]'],
 
   /** Giris ekrani gostergeleri (oturum dusmus). */
   loginIndicators: ['input[name="pass"]', 'form[action*="login"]'],
@@ -37,6 +58,28 @@ export const POST_LINK_PATTERNS: RegExp[] = [
   /\/groups\/[^/]+\/permalink\/\d+/,
   /[?&]multi_permalinks=\d+/,
 ];
+
+/**
+ * Gonderi kimligini TASIYAN href kaliplari (kalici baglanti olmak zorunda degil).
+ *
+ * Agustos 2026'da gonderinin kendi zaman damgasi linki obfuscate edildi: href artik
+ * yalnizca sifreli bir `__cft__` blogu tasiyor, icinde post id yok. Buna karsilik
+ * ayni gonderinin YORUM kalici baglantilari (.../posts/<id>/?comment_id=...) ve
+ * FOTOGRAF baglantilari (?set=pcb.<id>) hala gercek post id'sini tasiyor.
+ *
+ * Yol (path) gonderiyi tanimlar; comment_id yalnizca o gonderi icindeki yorumu
+ * isaret eder. Bu yuzden id cikarirken comment_id'li linkler DE kullanilabilir -
+ * ama zaman damgasi icin kullanilamaz (yorumun zamanini verirler).
+ */
+export const POST_ID_PATTERNS: RegExp[] = [
+  /\/groups\/[^/]+\/(?:posts|permalink)\/(\d+)/,
+  /[?&]multi_permalinks=(\d+)/,
+  /[?&]story_fbid=(\d+)/,
+  /[?&]set=pcb\.(\d+)/,
+];
+
+/** Bir href icindeki grup slug/id'si. */
+export const GROUP_IN_HREF_PATTERN = /\/groups\/([^/?#]+)/;
 
 /**
  * Yorum baglantisi isareti. Yorum bildirimlerinin ve yorum kalici baglantilarinin

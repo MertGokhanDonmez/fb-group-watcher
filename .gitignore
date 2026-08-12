@@ -11,3 +11,8 @@ data/
 *.log
 .DS_Store
 Thumbs.db
+
+# Gercek Facebook snapshot'lari. Selector onarimi icin sart ama icinde grup
+# uyelerinin gercek isimleri, profil linkleri ve gonderi metinleri var; bunlar
+# herkese acik repoya girmemeli. Elle sadelestirilmis group-feed.html izlenir.
+extension/test/fixtures/group-real-*.html
