@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, type Template } from '../api.ts';
-import { parseList } from '../format.ts';
+import { parseLines } from '../format.ts';
 
 // Faz 3'te (yorum/DM gonderimi) render edilecek degiskenler.
 const VARIABLES = ['{{author}}', '{{group}}', '{{location}}'];
@@ -21,7 +21,7 @@ export function Templates(): JSX.Element {
   const add = async (): Promise<void> => {
     setError(null);
     try {
-      await api.createTemplate({ name, kind, variants: parseList(variants) });
+      await api.createTemplate({ name, kind, variants: parseLines(variants) });
       setName('');
       setVariants('');
       await reload();
@@ -41,7 +41,7 @@ export function Templates(): JSX.Element {
   };
 
   const saveVariants = (template: Template, value: string): Promise<void> =>
-    run(() => api.updateTemplate(template.id, { variants: parseList(value) }));
+    run(() => api.updateTemplate(template.id, { variants: parseLines(value) }));
 
   const remove = (template: Template): Promise<void> => {
     if (!confirm(`"${template.name}" sablonu silinsin mi?`)) return Promise.resolve();
@@ -87,7 +87,7 @@ export function Templates(): JSX.Element {
         <button
           className="primary"
           style={{ marginTop: '0.8rem' }}
-          disabled={name.trim() === '' || parseList(variants).length === 0}
+          disabled={name.trim() === '' || parseLines(variants).length === 0}
           onClick={() => void add()}
         >
           Sablon ekle

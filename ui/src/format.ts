@@ -32,3 +32,18 @@ export function parseList(value: string): string[] {
     .map((item) => item.trim())
     .filter((item) => item !== '');
 }
+
+/**
+ * YALNIZCA satir sonuna gore boler.
+ *
+ * Sablon varyantlari cumledir ve "Interested, is this still available?" gibi
+ * dogal olarak virgul icerir; parseList bunlari iki ayri varyanta bolerek yarim
+ * mesaj uretir. Anahtar kelime listelerinde virgul ayirici olarak dogru oldugu
+ * icin iki fonksiyon ayri tutuluyor.
+ */
+export function parseLines(value: string): string[] {
+  return value
+    .split('\n')
+    .map((item) => item.trim())
+    .filter((item) => item !== '');
+}
