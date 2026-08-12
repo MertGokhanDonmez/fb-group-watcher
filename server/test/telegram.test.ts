@@ -4,6 +4,7 @@ import { NOTIFICATION_CHANNEL } from '../../shared/protocol.ts';
 import { bus } from '../src/bus.ts';
 import { ingestPosts } from '../src/ingest.ts';
 import {
+  discoverTelegramChats,
   escapeHtml,
   formatMatchMessage,
   notifyMatch,
@@ -14,7 +15,7 @@ import { processNewPosts } from '../src/pipeline.ts';
 import { createGroup } from '../src/repo/groups.ts';
 import { getMatchDetail, listMatchDetails } from '../src/repo/matches.ts';
 import { createRule } from '../src/repo/rules.ts';
-import { updateSettings } from '../src/repo/settings.ts';
+import { getSettings, updateSettings } from '../src/repo/settings.ts';
 import { dropTempDb, useTempDb } from './helpers.ts';
 
 const STATS: ParseStats = { articlesSeen: 1, postsParsed: 1, failures: 0 };
@@ -242,5 +243,75 @@ describe('startTelegramAlarms', () => {
     stop();
     bus.emitEvent({ type: 'log', level: 'error', message: 'Durduktan sonra', at: Date.now() });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('discoverTelegramChats', () => {
+  /** getMe + getUpdates cevaplarini sirayla dondurur. */
+  function stubDiscovery(updates: unknown[]): void {
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/getMe')) {
+        return new Response(JSON.stringify({ ok: true, result: { username: 'fbw_bot' } }), { status: 200 });
+      }
+      if (url.endsWith('/getUpdates')) {
+        return new Response(JSON.stringify({ ok: true, result: updates }), { status: 200 });
+      }
+      return telegramError(404, 'beklenmeyen metot');
+    });
+  }
+
+  it('grup, kanal ve ozel sohbetleri farkli update turlerinden toplar', async () => {
+    stubDiscovery([
+      { message: { chat: { id: -1001, type: 'supergroup', title: 'Prag Bedava' } } },
+      { my_chat_member: { chat: { id: -1002, type: 'group', title: 'Ev Esyasi' } } },
+      { channel_post: { chat: { id: -1003, type: 'channel', title: 'Duyurular' } } },
+      { message: { chat: { id: 42, type: 'private', first_name: 'Gokhan', username: 'gokhan' } } },
+    ]);
+
+    const result = await discoverTelegramChats();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.data.botUsername).toBe('fbw_bot');
+    // Gruplar once, kendi aralarinda basliga gore alfabetik; ozel sohbet en sona.
+    expect(result.data.chats.map((chat) => chat.title)).toEqual([
+      'Duyurular',
+      'Ev Esyasi',
+      'Prag Bedava',
+      'Gokhan @gokhan',
+    ]);
+    expect(result.data.chats.map((chat) => chat.id)).toEqual(['-1003', '-1002', '-1001', '42']);
+    expect(result.data.chats.at(-1)).toEqual({ id: '42', title: 'Gokhan @gokhan', type: 'private' });
+  });
+
+  it('ayni sohbeti bir kez listeler', async () => {
+    stubDiscovery([
+      { message: { chat: { id: -1001, type: 'supergroup', title: 'Prag Bedava' } } },
+      { message: { chat: { id: -1001, type: 'supergroup', title: 'Prag Bedava' } } },
+    ]);
+    const result = await discoverTelegramChats();
+    expect(result.ok && result.data.chats).toHaveLength(1);
+  });
+
+  it('offset gondermez - update kuyrugunu tuketmek listeyi tek kullanimlik yapardi', async () => {
+    stubDiscovery([]);
+    await discoverTelegramChats();
+    const call = fetchMock.mock.calls.find(([input]) => String(input).endsWith('/getUpdates'));
+    expect(call).toBeDefined();
+    expect(JSON.parse(String(call![1]?.body))).not.toHaveProperty('offset');
+  });
+
+  it('token yoksa API cagrisi yapmaz', async () => {
+    fetchMock.mockClear();
+    const result = await discoverTelegramChats({ ...getSettings(), telegramBotToken: '' });
+    expect(result).toEqual({ ok: false, error: 'Bot token girilmemis' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('API hatasini kullaniciya anlasilir sekilde iletir', async () => {
+    fetchMock.mockResolvedValue(telegramError(401, 'Unauthorized'));
+    const result = await discoverTelegramChats();
+    expect(result).toEqual({ ok: false, error: 'Unauthorized' });
   });
 });

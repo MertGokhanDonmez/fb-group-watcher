@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, type Area, type Settings } from '../api.ts';
+import { api, type Area, type Settings, type TelegramDiscovery } from '../api.ts';
 
 interface Props {
   onSaved: () => void;
@@ -35,6 +35,8 @@ export function SettingsPage({ onSaved }: Props): JSX.Element {
   const [areas, setAreas] = useState<Area[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [discovery, setDiscovery] = useState<TelegramDiscovery | null>(null);
+  const [discovering, setDiscovering] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -66,6 +68,19 @@ export function SettingsPage({ onSaved }: Props): JSX.Element {
       setTimeout(() => setMessage(null), 4000);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  };
+
+  const findChats = async (): Promise<void> => {
+    setError(null);
+    setDiscovering(true);
+    try {
+      setDiscovery(await api.telegramChats());
+    } catch (caught) {
+      setDiscovery(null);
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setDiscovering(false);
     }
   };
 
@@ -134,13 +149,54 @@ export function SettingsPage({ onSaved }: Props): JSX.Element {
           </div>
         </div>
         <div className="hint">
-          Telegram'da @BotFather ile bot olusturun, tokeni buraya girin. Chat ID icin bota bir mesaj
-          atip @userinfobot kullanabilirsiniz. Eslesme bildirimi icin kurallarda
-          "Bildirim gonder" secenegi acik olmali.
+          Telegram'da <strong>@BotFather</strong> ile bot olusturun ve tokeni yukariya yapistirin.
+          Sonra botu bildirim gonderecegi <strong>gruba ekleyin</strong> ve grupta{' '}
+          <code>/start{discovery?.botUsername ? `@${discovery.botUsername}` : '@botadiniz'}</code>{' '}
+          yazin - botlar gizlilik modu yuzunden gruplarda varsayilan olarak yalnizca komutlari
+          gorur. Ardindan asagidaki dugmeye basin, chat ID'yi elle aramaniza gerek yok.
         </div>
-        <button className="ghost" style={{ marginTop: '0.7rem' }} onClick={() => void telegramTest()}>
-          Test mesaji gonder
-        </button>
+
+        <div className="row" style={{ marginTop: '0.7rem' }}>
+          <button className="ghost" disabled={discovering} onClick={() => void findChats()}>
+            {discovering ? 'Araniyor...' : 'Sohbetleri bul'}
+          </button>
+          <button className="ghost" onClick={() => void telegramTest()}>
+            Test mesaji gonder
+          </button>
+        </div>
+
+        {discovery && (
+          <div style={{ marginTop: '0.8rem' }}>
+            <div className="hint">
+              {discovery.botUsername ? `Bot: @${discovery.botUsername}. ` : ''}
+              {discovery.chats.length === 0
+                ? 'Bot henuz hicbir sohbet gormemis. Gruba ekleyip bir komut yazdiktan sonra tekrar deneyin. (Telegram gecmisi ~24 saat tutar.)'
+                : 'Bildirimlerin gidecegi sohbeti secin:'}
+            </div>
+            {discovery.chats.map((chat) => {
+              const selected = chat.id === settings.telegramChatId;
+              return (
+                <button
+                  key={chat.id}
+                  className={selected ? 'primary' : 'ghost'}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', marginTop: '0.4rem' }}
+                  onClick={() => void save({ telegramChatId: chat.id })}
+                >
+                  {chat.title}{' '}
+                  <span className="badge muted">{chat.type}</span>{' '}
+                  <span className="hint" style={{ display: 'inline' }}>{chat.id}</span>
+                  {selected ? ' ✓' : ''}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="hint" style={{ marginTop: '0.7rem' }}>
+          Eslesme bildirimi icin kurallarda <strong>"Bildirim gonder"</strong> secenegi acik olmali.
+          Telegram gonderimi dry-run'dan etkilenmez (Facebook'a dokunmaz), ancak kill switch
+          aciksa o da durur.
+        </div>
       </div>
 
       <div className="card">

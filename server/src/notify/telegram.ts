@@ -21,6 +21,114 @@ export function telegramConfigured(settings: Settings): boolean {
 
 export type TelegramResult = { ok: true } | { ok: false; error: string };
 
+/* ---------- Kesif: bot kimligi ve gorunur sohbetler ---------- */
+
+/** Bot API'de tek bir metodu cagirir ve `result` alanini doner. */
+async function callTelegram<T>(
+  method: string,
+  token: string,
+  params: Record<string, unknown> = {},
+): Promise<{ ok: true; result: T } | { ok: false; error: string }> {
+  if (token === '') return { ok: false, error: 'Bot token girilmemis' };
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(params),
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+    const body = (await response.json()) as { ok?: boolean; result?: T; description?: string };
+    if (!response.ok || body.ok !== true) {
+      return { ok: false, error: body.description ?? `Telegram API ${response.status}` };
+    }
+    return { ok: true, result: body.result as T };
+  } catch (error) {
+    return { ok: false, error: `Telegram'a ulasilamadi: ${String(error)}` };
+  }
+}
+
+export interface TelegramChat {
+  id: string;
+  /** Grup/kanal adi, ozel sohbetlerde kisinin adi. */
+  title: string;
+  /** private | group | supergroup | channel */
+  type: string;
+}
+
+export interface TelegramDiscovery {
+  botUsername: string;
+  chats: TelegramChat[];
+}
+
+/** Telegram update nesnesinin bize lazim olan kadari. */
+interface TelegramUpdate {
+  message?: { chat?: RawChat };
+  edited_message?: { chat?: RawChat };
+  channel_post?: { chat?: RawChat };
+  my_chat_member?: { chat?: RawChat };
+  chat_member?: { chat?: RawChat };
+}
+
+interface RawChat {
+  id?: number;
+  type?: string;
+  title?: string;
+  username?: string;
+  first_name?: string;
+}
+
+/**
+ * Botun son gunlerde gordugu sohbetleri listeler.
+ *
+ * Chat ID'yi elle bulmak bu kurulumun en zahmetli adimi: gruplarda @userinfobot
+ * ise yaramaz, insanin getUpdates ciktisini elle okumasi gerekir. Burada onu biz
+ * yapiyoruz.
+ *
+ * `offset` GONDERILMIYOR - offset gondermek update'leri onaylayip kuyruktan siler
+ * ve kullanici listeyi ikinci kez acamaz.
+ *
+ * Bir update'in gorunmesi icin botun o sohbette bir sey gormus olmasi gerekir:
+ * gruba eklenmesi (my_chat_member) ya da bir mesaj (gizlilik modu aciksa yalnizca
+ * komutlar). Bu yuzden arayuzde "gruba /start@botadi yaz" diyoruz.
+ */
+export async function discoverTelegramChats(
+  settings: Settings = getSettings(),
+): Promise<{ ok: true; data: TelegramDiscovery } | { ok: false; error: string }> {
+  const token = settings.telegramBotToken;
+
+  const me = await callTelegram<{ username?: string }>('getMe', token);
+  if (!me.ok) return { ok: false, error: me.error };
+
+  const updates = await callTelegram<TelegramUpdate[]>('getUpdates', token, { limit: 100 });
+  if (!updates.ok) return { ok: false, error: updates.error };
+
+  const seen = new Map<string, TelegramChat>();
+  for (const update of updates.result) {
+    const raw =
+      update.message?.chat ??
+      update.edited_message?.chat ??
+      update.channel_post?.chat ??
+      update.my_chat_member?.chat ??
+      update.chat_member?.chat;
+    if (raw?.id === undefined) continue;
+    const id = String(raw.id);
+    if (seen.has(id)) continue;
+    const title =
+      raw.title ??
+      [raw.first_name, raw.username ? `@${raw.username}` : null].filter(Boolean).join(' ') ??
+      id;
+    seen.set(id, { id, title: title === '' ? id : title, type: raw.type ?? 'unknown' });
+  }
+
+  // Gruplar once: kullanici neredeyse her zaman bir grubu arıyor.
+  const chats = [...seen.values()].sort((a, b) => {
+    const rank = (chat: TelegramChat): number => (chat.type === 'private' ? 1 : 0);
+    return rank(a) - rank(b) || a.title.localeCompare(b.title);
+  });
+
+  return { ok: true, data: { botUsername: me.result.username ?? '', chats } };
+}
+
 /** Bot API'ye tek mesaj gonderir. Hata firlatmaz; sonucu deger olarak doner. */
 export async function sendTelegramMessage(
   text: string,

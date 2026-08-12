@@ -33,6 +33,18 @@ export interface Settings {
   heartbeatTimeoutSec: number;
 }
 
+export interface TelegramChat {
+  id: string;
+  title: string;
+  /** private | group | supergroup | channel */
+  type: string;
+}
+
+export interface TelegramDiscovery {
+  botUsername: string;
+  chats: TelegramChat[];
+}
+
 export interface AgentStatus {
   connected: boolean;
   lastHeartbeatAt: number | null;
@@ -113,6 +125,7 @@ export const api = {
   regenerateToken: () =>
     request<{ token: string }>('/settings/agent-token/regenerate', { method: 'POST' }),
   telegramTest: () => request<{ ok: boolean }>('/settings/telegram-test', { method: 'POST' }),
+  telegramChats: () => request<TelegramDiscovery>('/settings/telegram-chats'),
 
   listGroups: () => request<Group[]>('/groups'),
   createGroup: (input: { url: string; name?: string }) =>

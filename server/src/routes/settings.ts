@@ -5,7 +5,7 @@ import { pushConfigToAgent } from '../agent/hub.ts';
 import { getAgentStatus, isAgentAlive } from '../agent/status.ts';
 import { logEvent } from '../repo/events.ts';
 import { listAreas } from '../location/extract.ts';
-import { sendTelegramMessage } from '../notify/telegram.ts';
+import { discoverTelegramChats, sendTelegramMessage } from '../notify/telegram.ts';
 import { ensureAgentToken, getSettings, updateSettings } from '../repo/settings.ts';
 
 const patchSchema = z
@@ -78,6 +78,16 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
    * Telegram ayarlarini dogrulamanin tek guvenilir yolu gercek bir mesaj
    * gondermektir; token/chat ID hatalari ancak API cevabinda gorunur.
    */
+  /**
+   * Botun gordugu sohbetleri listeler; kullanici chat ID'yi elle aramak yerine
+   * listeden secer. Kurulumun en cok takilan adimi buydu.
+   */
+  app.get('/api/settings/telegram-chats', async (_request, reply) => {
+    const result = await discoverTelegramChats();
+    if (!result.ok) return reply.status(502).send({ error: result.error });
+    return result.data;
+  });
+
   app.post('/api/settings/telegram-test', async (_request, reply) => {
     const result = await sendTelegramMessage(
       '✅ fb-group-watcher test bildirimi - baglanti calisiyor',
