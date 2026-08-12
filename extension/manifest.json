@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "FB Grup Izleyici",
+  "version": "0.1.0",
+  "description": "Belirlenen Facebook gruplarindaki yeni gonderileri izler ve yerel panele iletir.",
+  "permissions": ["tabs", "storage", "alarms", "scripting"],
+  "host_permissions": ["https://www.facebook.com/*", "http://127.0.0.1:8787/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.facebook.com/groups/*", "https://www.facebook.com/notifications*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "options_page": "options.html",
+  "minimum_chrome_version": "116"
+}

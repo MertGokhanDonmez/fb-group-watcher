@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <title>FB Grup Izleyici - Ayarlar</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+        max-width: 34rem;
+        margin: 2.5rem auto;
+        padding: 0 1.25rem;
+        line-height: 1.55;
+      }
+      h1 { font-size: 1.25rem; margin-bottom: 0.25rem; }
+      p.hint { color: #666; margin-top: 0; font-size: 0.9rem; }
+      label { display: block; font-weight: 600; margin-bottom: 0.35rem; }
+      input {
+        width: 100%;
+        padding: 0.55rem 0.65rem;
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        font-size: 0.9rem;
+        border: 1px solid #bbb;
+        border-radius: 6px;
+        background: canvas;
+        color: canvastext;
+      }
+      button {
+        margin-top: 0.9rem;
+        padding: 0.55rem 1.1rem;
+        border: 0;
+        border-radius: 6px;
+        background: #2563eb;
+        color: #fff;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      #status { margin-top: 1rem; font-size: 0.9rem; }
+      .ok { color: #15803d; }
+      .err { color: #b91c1c; }
+      ol { padding-left: 1.2rem; font-size: 0.9rem; color: #555; }
+    </style>
+  </head>
+  <body>
+    <h1>FB Grup Izleyici</h1>
+    <p class="hint">Eklentinin yerel panele baglanabilmesi icin agent tokenina ihtiyaci var.</p>
+
+    <label for="token">Agent token</label>
+    <input id="token" type="text" spellcheck="false" placeholder="panelde Ayarlar sayfasinda yazar" />
+    <button id="save">Kaydet ve baglan</button>
+    <div id="status"></div>
+
+    <h2 style="font-size: 1rem; margin-top: 2rem">Nasil alinir?</h2>
+    <ol>
+      <li>Panelde <strong>Ayarlar</strong> sayfasini acin (http://127.0.0.1:8787).</li>
+      <li><strong>Agent token</strong> alanindaki degeri kopyalayin.</li>
+      <li>Buraya yapistirip kaydedin.</li>
+    </ol>
+
+    <h2 style="font-size: 1rem; margin-top: 1.5rem">Brave kullaniyorsaniz</h2>
+    <ol>
+      <li>facebook.com'da adres cubugundaki aslan simgesine tiklayip <strong>Shields'i bu site
+        icin kapatin</strong>. Fingerprint korumasi sayfa yapisini degistirip gonderi
+        ayristirmayi bozabilir.</li>
+      <li>"Panele ulasilamadi" hatasi aliyor ama sunucu calisiyorsa, Brave'in yerel ag
+        engellemesini kontrol edin.</li>
+    </ol>
+
+    <script src="options.js"></script>
+  </body>
+</html>

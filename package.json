@@ -1,0 +1,42 @@
+{
+  "name": "fb-group-watcher",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "workspaces": [
+    "server",
+    "ui"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,ui,ext -c cyan,magenta,yellow \"npm:dev:server\" \"npm:dev:ui\" \"npm:dev:ext\"",
+    "dev:server": "tsx watch server/src/index.ts",
+    "dev:ui": "vite --config ui/vite.config.ts",
+    "dev:ext": "node scripts/build-extension.mjs --watch",
+    "build": "npm run build:ui && npm run build:ext && npm run build:server",
+    "build:ui": "vite build --config ui/vite.config.ts",
+    "build:ext": "node scripts/build-extension.mjs",
+    "build:server": "node scripts/build-server.mjs",
+    "start": "node server/dist/index.js",
+    "typecheck": "tsc -p server/tsconfig.json && tsc -p extension/tsconfig.json && tsc -p ui/tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.17",
+    "@types/react-dom": "^18.3.5",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "esbuild": "^0.24.0",
+    "happy-dom": "^20.11.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3",
+    "vitest": "^2.1.8"
+  }
+}

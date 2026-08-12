@@ -1,0 +1,64 @@
+<!--
+  Facebook grup akisinin yapisal ozeti.
+
+  GERCEK SNAPSHOT NASIL ALINIR (selector bozuldugunda sart):
+    1. Chrome'da grubu kronolojik gorunumde ac
+    2. DevTools > Elements > <html> uzerinde sag tik > Copy > Copy outerHTML
+    3. Bu klasore group-feed-<tarih>.html olarak kaydet ve testte referans ver
+
+  Buradaki isaretleme bilerek sadelestirildi: yalnizca parser'in dayandigi
+  yapisal ipuclarini (role, dir, data-ad-preview, href kaliplari) icerir.
+  Facebook'un obfuscated sinif isimleri taklit edilmedi cunku parser onlara bakmaz.
+-->
+<div role="feed">
+  <!-- 1. gonderi: tam veri, gorsel ve ic ice yorum iceriyor -->
+  <div role="article" aria-labelledby="post-1">
+    <div>
+      <h3>
+        <a href="/groups/bedava-esya/user/100001/" role="link">
+          <img src="https://scontent.xx.fbcdn.net/avatar1.jpg" width="40" />
+          <span>Ayşe Yılmaz</span>
+        </a>
+      </h3>
+      <span>
+        <a href="/groups/bedava-esya/posts/1234567890/?ref=feed&amp;__tn__=-R" role="link">
+          <span>2 dk</span>
+        </a>
+      </span>
+    </div>
+
+    <div data-ad-preview="message">
+      <div dir="auto">Bedava koltuk veriyorum, durumu iyi.</div>
+      <div dir="auto">Alan gelsin, Kadıköy'de.</div>
+    </div>
+
+    <img src="https://scontent.xx.fbcdn.net/koltuk.jpg" width="500" />
+
+    <!-- Yorum: Facebook yorumlari da role="article" verir; parser bunu gonderi saymamali -->
+    <div role="article">
+      <a href="/groups/bedava-esya/user/222222/" role="link"><span>Mehmet Demir</span></a>
+      <div dir="auto">Ben ilgileniyorum, hala duruyor mu?</div>
+    </div>
+  </div>
+
+  <!-- 2. gonderi: data-ad-preview yok, yedek metin stratejisi devreye girmeli -->
+  <div role="article" aria-labelledby="post-2">
+    <div>
+      <h3>
+        <a href="/groups/bedava-esya/user/100002/" role="link"><span>Zeynep Kaya</span></a>
+      </h3>
+      <span>
+        <a href="/groups/bedava-esya/posts/9876543210/" role="link"><span>1 sa</span></a>
+      </span>
+    </div>
+    <div dir="auto">Ücretsiz buzdolabı, çalışır durumda. Sadece gelip alması gereken var.</div>
+  </div>
+
+  <!-- 3. gonderi: kalici baglanti yok (sponsorlu/onerilen icerik). Ayristirilamamali. -->
+  <div role="article" aria-labelledby="post-3">
+    <div>
+      <h3><span>Sponsorlu</span></h3>
+    </div>
+    <div dir="auto">Reklam icerigi</div>
+  </div>
+</div>
