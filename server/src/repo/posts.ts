@@ -19,6 +19,7 @@ interface PostRow {
   location_lat: number | null;
   location_lon: number | null;
   distance_km: number | null;
+  source: 'feed' | 'notification';
 }
 
 function toPost(row: PostRow): Post {
@@ -39,6 +40,7 @@ function toPost(row: PostRow): Post {
     locationLat: row.location_lat,
     locationLon: row.location_lon,
     distanceKm: row.distance_km,
+    source: row.source,
   };
 }
 
@@ -74,8 +76,8 @@ export function insertPostIfNew(
     `INSERT OR IGNORE INTO posts (
        fb_post_id, group_id, permalink, author_name, author_profile_url, author_user_id,
        text, image_urls, posted_at, posted_at_label, seen_at,
-       location_name, location_lat, location_lon, distance_km
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       location_name, location_lat, location_lon, distance_km, source
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     raw.fbPostId,
     groupId,
     raw.permalink,
@@ -91,6 +93,7 @@ export function insertPostIfNew(
     location?.lat ?? null,
     location?.lon ?? null,
     location?.distanceKm ?? null,
+    raw.source,
   );
   if (result.changes === 0) return null;
   return getPostByFbId(raw.fbPostId);

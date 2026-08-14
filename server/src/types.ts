@@ -68,6 +68,12 @@ export interface Post {
   locationLon: number | null;
   /** Ev konumuna uzaklik (km). Konum veya ev konumu bilinmiyorsa null. */
   distanceKm: number | null;
+  /**
+   * Gonderiyi hangi yol yakaladi. 'notification' saniyeler icinde gelir,
+   * 'feed' grup taramasinin turune bagli oldugu icin dakikalar surer -
+   * bildirim yolunun gercekten calisip calismadigi ancak buradan gorulur.
+   */
+  source: 'feed' | 'notification';
 }
 
 export type MatchStatus = 'pending' | 'approved' | 'sent' | 'failed' | 'skipped' | 'ignored';

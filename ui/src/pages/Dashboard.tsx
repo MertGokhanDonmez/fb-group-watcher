@@ -12,6 +12,10 @@ interface FeedEntry {
   text: string;
   link?: string;
   place?: string;
+  /** Gonderiyi hangi yol yakaladi; bildirim yolunun calisip calismadigini gosterir. */
+  via?: 'feed' | 'notification';
+  /** Gonderi ilk goruldugunde kac dakikalikti. Gecikmenin dogrudan olcusu. */
+  ageMin?: number;
 }
 
 const MAX_FEED = 80;
@@ -20,6 +24,18 @@ const MAX_FEED = 80;
 function placeLabel(post: Post): string | undefined {
   if (!post.locationName) return undefined;
   return post.distanceKm === null ? post.locationName : `${post.locationName} · ${post.distanceKm} km`;
+}
+
+/**
+ * Gonderi ilk goruldugunde kac dakikalikti. Negatif cikabilir: enrichPost
+ * daha taze bir etiketten postedAt'i ileri kaydirirken seenAt ilk yakalamada
+ * kalir. Bu durumda 0'a kirpiyoruz.
+ * postedAt cikarilamadiysa (etiket okunamadi) undefined - "0 dakika" demek
+ * yaniltici olurdu, bilinmiyor demek dogru.
+ */
+function ageMinutes(post: Post): number | undefined {
+  if (post.postedAt === null) return undefined;
+  return Math.max(0, Math.round((post.seenAt - post.postedAt) / 60_000));
 }
 
 function postEntry(post: Post): FeedEntry {
@@ -31,6 +47,8 @@ function postEntry(post: Post): FeedEntry {
     text: truncate(post.text) || '(metin yok)',
     link: post.permalink,
     place: placeLabel(post),
+    via: post.source,
+    ageMin: ageMinutes(post),
   };
 }
 
@@ -225,6 +243,14 @@ export function Dashboard({ status, onStatusChange }: Props): JSX.Element {
                 <strong>{entry.title}</strong>
                 <span>{clock(entry.at)}</span>
                 {entry.place && <span className="badge muted">{entry.place}</span>}
+                {entry.via && (
+                  <span className={`badge ${entry.via === 'notification' ? 'ok' : 'muted'}`}>
+                    {entry.via === 'notification' ? 'BILDIRIM' : 'TARAMA'}
+                  </span>
+                )}
+                {entry.ageMin !== undefined && (
+                  <span className="badge muted">+{entry.ageMin} dk</span>
+                )}
                 {entry.link && (
                   <a href={entry.link} target="_blank" rel="noreferrer">
                     Facebook'ta ac

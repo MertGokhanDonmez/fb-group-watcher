@@ -3,7 +3,7 @@ import type { RawPost } from '../../shared/protocol.ts';
 import { createGroup, getGroupByFbId, listEnabledGroups, updateGroup } from '../src/repo/groups.ts';
 import { createTemplate, listTemplates } from '../src/repo/templates.ts';
 import { createRule, getRule, updateRule } from '../src/repo/rules.ts';
-import { insertPostIfNew } from '../src/repo/posts.ts';
+import { enrichPost, getPostByFbId, insertPostIfNew } from '../src/repo/posts.ts';
 import { countSentActionsForRuleSince, createMatchIfNew, listMatchDetails } from '../src/repo/matches.ts';
 import { countRealActionsSince, createAction, setActionStatus } from '../src/repo/actions.ts';
 import { ensureAgentToken, getSettings, updateSettings } from '../src/repo/settings.ts';
@@ -89,6 +89,32 @@ describe('posts dedupe', () => {
 
     const second = insertPostIfNew(makeRawPost(), group!.id);
     expect(second).toBeNull();
+  });
+
+  it('gonderiyi hangi yolun yakaladigini saklar', () => {
+    const group = getGroupByFbId('bedava-esya');
+    const viaFeed = insertPostIfNew(makeRawPost({ fbPostId: '333' }), group!.id);
+    const viaNotif = insertPostIfNew(
+      makeRawPost({ fbPostId: '444', source: 'notification' }),
+      group!.id,
+    );
+    expect(viaFeed!.source).toBe('feed');
+    expect(viaNotif!.source).toBe('notification');
+  });
+
+  it('ilk yakalayan yol kaydedilir - sonraki gorusler kaynagi ezmez', () => {
+    /*
+     * Bildirim yolu bir gonderiyi saniyeler icinde yakalar, grup taramasi ayni
+     * gonderiyi dakikalar sonra tekrar getirir. Kaynak ezilseydi her gonderi
+     * er ya da gec 'feed' gorunur ve bildirim yolunun ise yarayip yaramadigi
+     * olculemezdi - kolonu eklememizin tek sebebi buydu.
+     */
+    const group = getGroupByFbId('bedava-esya');
+    const raw = makeRawPost({ fbPostId: '555', source: 'notification', text: 'kisa metin' });
+    expect(insertPostIfNew(raw, group!.id)!.source).toBe('notification');
+
+    enrichPost('555', { ...raw, source: 'feed' }, 'kisa metin ama artik cok daha uzun hali', null);
+    expect(getPostByFbId('555')!.source).toBe('notification');
   });
 
   it('JSON kolonlarini dizi olarak geri okur', () => {

@@ -133,4 +133,20 @@ export const MIGRATIONS: string[] = [
   -- NULL = mesafe filtresi yok. Konumu bilinmeyen gonderiler elenmez.
   ALTER TABLE rules ADD COLUMN max_distance_km REAL;
   `,
+
+  // 3 - gonderinin hangi yoldan geldigi
+  `
+  /*
+   * Iki yakalama yolu var ve gecikmeleri taban tabana zit: bildirim sekmesi
+   * saniyeler, grup taramasi dakikalar. Hangisinin calistigi kaydedilmeyince
+   * "bildirimi actim, ise yariyor mu?" sorusu olculemiyordu - ve olcmeden
+   * tarama sikligini artirmak bosuna sayfa yuklemesi (yani bosuna ban riski)
+   * demek.
+   *
+   * Eski kayitlar icin varsayilan 'feed': bu kolon eklenmeden once bildirim
+   * yolu zaten dogrulanmamisti, 'feed' demek yanlis atif yapmaz.
+   */
+  ALTER TABLE posts ADD COLUMN source TEXT NOT NULL DEFAULT 'feed'
+    CHECK (source IN ('feed','notification'));
+  `,
 ];

@@ -107,6 +107,7 @@ interface DetailRow extends MatchRow {
   p_location_lat: number | null;
   p_location_lon: number | null;
   p_distance_km: number | null;
+  p_source: 'feed' | 'notification';
 }
 
 const DETAIL_SELECT = `
@@ -128,7 +129,8 @@ const DETAIL_SELECT = `
          p.location_name      AS p_location_name,
          p.location_lat       AS p_location_lat,
          p.location_lon       AS p_location_lon,
-         p.distance_km        AS p_distance_km
+         p.distance_km        AS p_distance_km,
+         p.source             AS p_source
     FROM matches m
     JOIN posts p ON p.id = m.post_id
     JOIN rules r ON r.id = m.rule_id
@@ -153,6 +155,7 @@ function toDetail(row: DetailRow, actionsByMatch: Map<number, MatchDetail['actio
     locationLat: row.p_location_lat,
     locationLon: row.p_location_lon,
     distanceKm: row.p_distance_km,
+    source: row.p_source,
   };
   return {
     ...toMatch(row),
