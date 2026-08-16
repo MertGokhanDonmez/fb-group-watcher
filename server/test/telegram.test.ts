@@ -7,7 +7,7 @@ import {
   discoverTelegramChats,
   escapeHtml,
   formatMatchMessage,
-  notifyMatch,
+  notifyMatches,
   sendTelegramMessage,
   startTelegramAlarms,
 } from '../src/notify/telegram.ts';
@@ -152,7 +152,7 @@ describe('formatMatchMessage', () => {
   it('kural, grup, anahtar kelime ve linki icerir', () => {
     fetchMock.mockResolvedValue(telegramOk());
     const detail = feed('Free sofa <cheap & nice>, pick up today');
-    const message = formatMatchMessage(detail);
+    const message = formatMatchMessage([detail]);
 
     expect(message).toContain('<b>Free furniture</b>');
     expect(message).toContain('Free Stuff in Prague');
@@ -162,11 +162,11 @@ describe('formatMatchMessage', () => {
   });
 });
 
-describe('notifyMatch', () => {
+describe('notifyMatches', () => {
   it('gonderim sonucunu telegram aksiyonu olarak kaydeder', async () => {
     fetchMock.mockImplementation(() => Promise.resolve(telegramOk()));
     const detail = feed('Free chair, Karlin');
-    await notifyMatch(detail);
+    await notifyMatches([detail]);
 
     const refreshed = refresh(detail.id);
     const action = refreshed.actions.find((a) => a.kind === 'telegram' && a.status === 'sent');
@@ -178,7 +178,7 @@ describe('notifyMatch', () => {
     // Her cagriya taze Response: govde bir kez okunabilir, paylasilan nesne olmaz.
     fetchMock.mockImplementation(() => Promise.resolve(telegramError(401, 'unauthorized')));
     const detail = feed('Free sofa, Vinohrady');
-    await notifyMatch(detail);
+    await notifyMatches([detail]);
 
     // feed() sirasinda boru hattinin tetikledigi bildirim de ayni anda kosuyor;
     // her iki kaydin da sonuclanmasini bekle.
@@ -196,7 +196,7 @@ describe('notifyMatch', () => {
     fetchMock.mockResolvedValue(telegramOk());
     updateSettings({ killSwitch: true });
     const detail = feed('Free chair, Zizkov');
-    await notifyMatch(detail);
+    await notifyMatches([detail]);
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(refresh(detail.id).actions.find((a) => a.kind === 'telegram')?.status).toBe('cancelled');
@@ -205,7 +205,7 @@ describe('notifyMatch', () => {
   it('yapilandirilmamissa aksiyon kaydi bile olusturmaz', async () => {
     updateSettings({ telegramBotToken: '' });
     const detail = feed('Free sofa, Smichov');
-    await notifyMatch(detail);
+    await notifyMatches([detail]);
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(refresh(detail.id).actions.filter((a) => a.kind === 'telegram')).toEqual([]);
@@ -313,5 +313,78 @@ describe('discoverTelegramChats', () => {
     fetchMock.mockResolvedValue(telegramError(401, 'Unauthorized'));
     const result = await discoverTelegramChats();
     expect(result).toEqual({ ok: false, error: 'Unauthorized' });
+  });
+});
+
+/**
+ * Regresyon: her kural icin ayri mesaj atiliyordu. "Free drawers, usb keyboard"
+ * gibi tek bir ilan uc kurala birden uydugu icin telefona ayni gonderi uc kez
+ * dusuyordu.
+ */
+describe('ayni gonderi birden fazla kurala uydugunda', () => {
+  beforeAll(() => {
+    createRule({
+      name: 'Bilgisayar',
+      enabled: true,
+      matchMode: 'any',
+      includeKeywords: ['keyboard'],
+      excludeKeywords: [],
+      regex: null,
+      actionComment: false,
+      actionDm: false,
+      actionNotify: true,
+      requireApproval: true,
+      commentTemplateId: null,
+      dmTemplateId: null,
+      dailyCap: 20,
+      maxPostAgeMin: 30,
+      maxDistanceKm: null,
+      priority: 1,
+      groupIds: [],
+    });
+  });
+
+  function sentMessages(): string[] {
+    return fetchMock.mock.calls
+      .filter(([url]) => String(url).includes('/sendMessage'))
+      .map(([, init]) => (JSON.parse(String(init?.body)) as { text: string }).text);
+  }
+
+  it('tek mesaj gonderir ve kurallari birlikte listeler', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(telegramOk()));
+    const post = rawPost('Free chair and usb keyboard, pick up in Zizkov');
+    processNewPosts(ingestPosts(NOTIFICATION_CHANNEL, [post], STATS));
+
+    await vi.waitFor(() => expect(sentMessages().length).toBeGreaterThan(0));
+
+    const messages = sentMessages();
+    expect(messages).toHaveLength(1);
+    // Kural sirasi listEnabledRules'a bagli; testi ona baglamiyoruz.
+    expect(messages[0]).toMatch(/Free furniture, Bilgisayar|Bilgisayar, Free furniture/);
+    // Hangi kelimenin hangi kuraldan geldigi kaybolmamali.
+    expect(messages[0]).toContain('Free furniture: chair');
+    expect(messages[0]).toContain('Bilgisayar: keyboard');
+  });
+
+  it('eslesme kayitlari ayri kalir ama tek aksiyon yazilir', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(telegramOk()));
+    const post = rawPost('Free sofa and keyboard, Holesovice');
+    processNewPosts(ingestPosts(NOTIFICATION_CHANNEL, [post], STATS));
+
+    await vi.waitFor(() => expect(sentMessages().length).toBeGreaterThan(0));
+
+    const details = listMatchDetails(100).filter((item) => item.post.fbPostId === post.fbPostId);
+    expect(details.map((item) => item.ruleName).sort()).toEqual(['Bilgisayar', 'Free furniture']);
+
+    const telegramActions = details.flatMap((item) =>
+      item.actions.filter((action) => action.kind === 'telegram'),
+    );
+    expect(telegramActions).toHaveLength(1);
+  });
+
+  it('tek kural uydugunda kural adini kelimelerin onunde tekrarlamaz', () => {
+    const detail = feed('Free chair only, nothing else here');
+    const message = formatMatchMessage([detail]);
+    expect(message).toContain('<i>chair</i>');
   });
 });

@@ -1,11 +1,11 @@
 import { bus } from './bus.ts';
 import { isTooOld, matchRule, ruleCoversGroup } from './matcher/match.ts';
-import { notifyMatch } from './notify/telegram.ts';
+import { notifyMatches } from './notify/telegram.ts';
 import { logEvent } from './repo/events.ts';
 import { createMatchIfNew, getMatchDetail } from './repo/matches.ts';
 import { listEnabledRules } from './repo/rules.ts';
 import { getSettings } from './repo/settings.ts';
-import type { Post } from './types.ts';
+import type { MatchDetail, Post } from './types.ts';
 
 /**
  * Yeni yakalanan gonderileri kurallardan gecirir.
@@ -20,6 +20,11 @@ export function processNewPosts(posts: Post[]): void {
   const options = { turkishSuffixes: getSettings().turkishSuffixMatching };
 
   for (const post of posts) {
+    // Bu gonderiye takilan ve bildirim isteyen eslesmeler. Tek gonderi birden
+    // fazla kurala uyabildigi icin toplanip TEK mesaj olarak gonderiliyor;
+    // eslesme kayitlari ayri kaliyor (gecmis ve onay akisi kural bazinda).
+    const notifiable: MatchDetail[] = [];
+
     for (const rule of rules) {
       if (!ruleCoversGroup(rule, post.groupId)) continue;
 
@@ -41,8 +46,7 @@ export function processNewPosts(posts: Post[]): void {
       const detail = getMatchDetail(match.id);
       if (detail) {
         bus.emitEvent({ type: 'match', match: detail });
-        // Gonderim asenkron; boru hattini bekletmez. Sonuc aksiyon kaydina yazilir.
-        if (rule.actionNotify) void notifyMatch(detail);
+        if (rule.actionNotify) notifiable.push(detail);
       }
       logEvent(
         'match',
@@ -51,5 +55,8 @@ export function processNewPosts(posts: Post[]): void {
         { postId: post.id, permalink: post.permalink },
       );
     }
+
+    // Gonderim asenkron; boru hattini bekletmez. Sonuc aksiyon kaydina yazilir.
+    if (notifiable.length > 0) void notifyMatches(notifiable);
   }
 }

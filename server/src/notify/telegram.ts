@@ -180,69 +180,96 @@ export function escapeHtml(text: string): string {
 
 const EXCERPT_MAX = 400;
 
-/** Eslesmeyi telefonda tek bakista degerlendirilecek bir mesaja cevirir. */
-export function formatMatchMessage(detail: MatchDetail): string {
+/**
+ * Ayni gonderiye takilan eslesmeleri TEK mesaja cevirir.
+ *
+ * Tek gonderi birden fazla kurala uyabilir ("free drawers, usb keyboard" hem
+ * mobilya hem bilgisayar kuralina uyar) ve her kural icin ayri mesaj atmak ayni
+ * ilani telefonda ust uste tekrarliyordu. Kural adlari tek mesajda toplaniyor;
+ * hangi kelimenin hangi kuraldan geldigi yine gorunur kaliyor.
+ *
+ * Cagiran taraf tum eslesmelerin AYNI gonderiye ait olmasini garanti etmeli;
+ * baslik disindaki her sey (konum, yazar, metin, link) ilkinden aliniyor.
+ */
+export function formatMatchMessage(details: MatchDetail[]): string {
+  const [primary] = details;
+  if (primary === undefined) return '';
+
   const lines: string[] = [];
-  lines.push(`\u{1F3AF} <b>${escapeHtml(detail.ruleName)}</b>`);
+  lines.push(`\u{1F3AF} <b>${escapeHtml(details.map((item) => item.ruleName).join(', '))}</b>`);
 
   const meta: string[] = [];
-  if (detail.groupName) meta.push(detail.groupName);
-  if (detail.post.locationName) {
+  if (primary.groupName) meta.push(primary.groupName);
+  if (primary.post.locationName) {
     meta.push(
-      detail.post.distanceKm !== null
-        ? `${detail.post.locationName} (${detail.post.distanceKm} km)`
-        : detail.post.locationName,
+      primary.post.distanceKm !== null
+        ? `${primary.post.locationName} (${primary.post.distanceKm} km)`
+        : primary.post.locationName,
     );
   }
   if (meta.length > 0) lines.push(`\u{1F4CD} ${escapeHtml(meta.join(' • '))}`);
 
-  if (detail.post.authorName) lines.push(`\u{1F464} ${escapeHtml(detail.post.authorName)}`);
-  if (detail.matchedKeywords.length > 0) {
-    lines.push(`<i>${escapeHtml(detail.matchedKeywords.join(', '))}</i>`);
+  if (primary.post.authorName) lines.push(`\u{1F464} ${escapeHtml(primary.post.authorName)}`);
+
+  for (const item of details) {
+    if (item.matchedKeywords.length === 0) continue;
+    // Tek kural varsa adini basta zaten yazdik, burada tekrar etmiyoruz.
+    const prefix = details.length > 1 ? `${escapeHtml(item.ruleName)}: ` : '';
+    lines.push(`<i>${prefix}${escapeHtml(item.matchedKeywords.join(', '))}</i>`);
   }
 
-  const text = detail.post.text.trim();
+  const text = primary.post.text.trim();
   if (text !== '') {
     const excerpt = text.length > EXCERPT_MAX ? `${text.slice(0, EXCERPT_MAX)}…` : text;
     lines.push('', escapeHtml(excerpt));
   }
 
-  lines.push('', `<a href="${escapeHtml(detail.post.permalink)}">Gonderiyi ac</a>`);
+  lines.push('', `<a href="${escapeHtml(primary.post.permalink)}">Gonderiyi ac</a>`);
   return lines.join('\n');
 }
 
 /**
- * Bir eslesmeyi Telegram'a bildirir ve sonucu aksiyon kaydi olarak birakir.
- * Kayit History sayfasinda gorunur; basarisiz gonderim de orada teshis edilir.
- * Yapilandirilmamissa sessizce atlanir - panel akisi zaten eslesmeyi gosteriyor.
+ * Ayni gonderiye ait eslesmeleri tek Telegram mesajiyla bildirir ve sonucu
+ * aksiyon kaydi olarak birakir. Kayit History sayfasinda gorunur; basarisiz
+ * gonderim de orada teshis edilir. Yapilandirilmamissa sessizce atlanir - panel
+ * akisi zaten eslesmeyi gosteriyor.
+ *
+ * Tek mesaj gittigi icin aksiyon kaydi da TEK: ilk eslesmeye baglaniyor. Her
+ * eslesmeye ayri "sent" kaydi yazsaydik gecmis N mesaj gonderildigini iddia
+ * ederdi; oysa bir tane gonderildi. Kaydin metni tum kurallari listeledigi icin
+ * hangi eslesmeleri kapsadigi mesajin kendisinden okunabiliyor.
  */
-export async function notifyMatch(detail: MatchDetail): Promise<void> {
+export async function notifyMatches(details: MatchDetail[]): Promise<void> {
+  const [primary] = details;
+  if (primary === undefined) return;
+
   const settings = getSettings();
   if (!telegramConfigured(settings)) return;
 
-  const message = formatMatchMessage(detail);
+  const message = formatMatchMessage(details);
+  const ruleNames = details.map((item) => item.ruleName).join(', ');
 
   if (settings.killSwitch) {
-    const action = createAction(detail.id, 'telegram', 'cancelled', message);
+    const action = createAction(primary.id, 'telegram', 'cancelled', message);
     logEvent('telegram', 'warn', 'Kill switch acik - Telegram bildirimi iptal edildi', {
-      matchId: detail.id,
+      matchId: primary.id,
     });
     bus.emitEvent({ type: 'action', action });
     return;
   }
 
-  const action = createAction(detail.id, 'telegram', 'sending', message);
+  const action = createAction(primary.id, 'telegram', 'sending', message);
   const result = await sendTelegramMessage(message, settings);
 
   if (result.ok) {
     setActionStatus(action.id, 'sent');
-    logEvent('telegram', 'info', `Telegram bildirimi gonderildi: "${detail.ruleName}"`, {
-      matchId: detail.id,
+    logEvent('telegram', 'info', `Telegram bildirimi gonderildi: "${ruleNames}"`, {
+      matchId: primary.id,
     });
   } else {
     setActionStatus(action.id, 'failed', { error: result.error });
     logEvent('telegram', 'warn', `Telegram bildirimi gonderilemedi: ${result.error}`, {
-      matchId: detail.id,
+      matchId: primary.id,
     });
   }
 
