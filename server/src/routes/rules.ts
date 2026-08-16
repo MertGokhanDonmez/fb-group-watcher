@@ -1,5 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { matchRule } from '../matcher/match.ts';
+import { keywordPattern, normalizeText } from '../matcher/normalize.ts';
 import { createRule, deleteRule, listRules, updateRule } from '../repo/rules.ts';
 
 const keywordList = z.array(z.string().trim().min(1)).max(200);
@@ -76,8 +78,64 @@ function missingTemplate(rule: {
   return null;
 }
 
+const probeQuery = z.object({ q: z.string().trim().min(1).max(200) });
+
+interface RuleProbe {
+  ruleId: number;
+  ruleName: string;
+  enabled: boolean;
+  matched: boolean;
+  reason: string | null;
+  includeHits: string[];
+  excludeHits: string[];
+  listedIn: 'include' | 'exclude' | null;
+}
+
+/**
+ * "bed ekli mi?" sorusunun iki ayri cevabi var ve ikisi de lazim:
+ *
+ *   listedIn - terim listede birebir yaziyor mu
+ *   matched  - icinde bu terim gecen bir gonderi bu kurala takilir miydi
+ *
+ * Ayirmak sart, cunku eslestirme kelime basindan onek ile calisiyor: listede
+ * "bed" varsa "bedside" de eslesir ama "bedside" listede yazmaz. Sadece birebir
+ * arama gosterseydik kullanici zaten kapsanan terimi tekrar tekrar eklerdi.
+ *
+ * Eslesme verdikti her zaman gercek matcher'dan aliniyor; burada ikinci bir
+ * kopya eslestirme mantigi yok, yoksa ikisi zamanla birbirinden ayrilir.
+ */
+function probeRules(query: string): RuleProbe[] {
+  const normalizedQuery = normalizeText(query);
+
+  return listRules().map((rule) => {
+    const verdict = matchRule(query, rule);
+    const hits = (keywords: string[]): string[] =>
+      keywords.filter((keyword) => keywordPattern(keyword)?.test(normalizedQuery) === true);
+
+    const inInclude = rule.includeKeywords.some((item) => normalizeText(item) === normalizedQuery);
+    const inExclude = rule.excludeKeywords.some((item) => normalizeText(item) === normalizedQuery);
+
+    return {
+      ruleId: rule.id,
+      ruleName: rule.name,
+      enabled: rule.enabled,
+      matched: verdict.matched,
+      reason: verdict.reason ?? null,
+      includeHits: hits(rule.includeKeywords),
+      excludeHits: hits(rule.excludeKeywords),
+      listedIn: inInclude ? 'include' : inExclude ? 'exclude' : null,
+    };
+  });
+}
+
 export const ruleRoutes: FastifyPluginAsync = async (app) => {
   app.get('/api/rules', async () => listRules());
+
+  app.get('/api/rules/probe', async (request, reply) => {
+    const parsed = probeQuery.safeParse(request.query);
+    if (!parsed.success) return reply.status(400).send({ error: 'Aranacak terim gerekli' });
+    return { query: parsed.data.q, results: probeRules(parsed.data.q) };
+  });
 
   app.post('/api/rules', async (request, reply) => {
     const parsed = createSchema.safeParse(request.body);

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, type Group, type Rule, type Template } from '../api.ts';
+import { api, type Group, type KeywordProbe, type Rule, type Template } from '../api.ts';
 import { parseList } from '../format.ts';
 
 /**
@@ -16,6 +16,199 @@ const SUGGESTED_EXCLUDES = [
   'iso',
   'rent',
 ];
+
+/** Ayni terimi iki kez eklemeyi onlemek icin kaba karsilastirma. Otorite sunucudaki matcher. */
+function sameTerm(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+interface KeywordEditorProps {
+  label: string;
+  hint?: string;
+  keywords: string[];
+  variant?: 'include' | 'exclude';
+  onChange: (next: string[]) => void;
+}
+
+/**
+ * Anahtar kelimeleri virgullu tek metin yerine ayri ayri etiket olarak gosterir.
+ * Tek metin alani iki sorun uretiyordu: uzun listede bir terimi gozle bulmak zor,
+ * ve yanlislikla bir virgulu silmek iki terimi sessizce tek terime yapistiriyordu.
+ */
+function KeywordEditor({
+  label,
+  hint,
+  keywords,
+  variant = 'include',
+  onChange,
+}: KeywordEditorProps): JSX.Element {
+  const [draft, setDraft] = useState('');
+
+  const commit = (): void => {
+    // Virgul/satir ile toplu yapistirma da desteklenir; tek tek eklemek sart degil.
+    const incoming = parseList(draft);
+    if (incoming.length === 0) return;
+    const next = [...keywords];
+    for (const term of incoming) {
+      if (!next.some((existing) => sameTerm(existing, term))) next.push(term);
+    }
+    setDraft('');
+    if (next.length !== keywords.length) onChange(next);
+  };
+
+  return (
+    <div>
+      <label>
+        {label} <span className="badge muted">{keywords.length}</span>
+      </label>
+      {keywords.length === 0 ? (
+        <div className="chip-empty">(bos)</div>
+      ) : (
+        <div className="chips">
+          {keywords.map((keyword) => (
+            <span key={keyword} className={`chip${variant === 'exclude' ? ' excluded' : ''}`}>
+              {keyword}
+              <button
+                type="button"
+                title={`"${keyword}" kaldir`}
+                onClick={() => onChange(keywords.filter((item) => item !== keyword))}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <input
+        type="text"
+        value={draft}
+        placeholder="kelime ekle, Enter"
+        style={{ marginTop: '0.4rem' }}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter') return;
+          event.preventDefault();
+          commit();
+        }}
+      />
+      {hint !== undefined && <div className="hint">{hint}</div>}
+    </div>
+  );
+}
+
+const REASON_LABEL: Record<string, string> = {
+  excluded: 'haric tutulan bir kelime veto etti',
+  'no-include-match': 'listede karsiligi yok',
+  'missing-terms': '"hepsi" modunda diger terimler eksik',
+  'empty-rule': 'kuralda hic terim yok',
+};
+
+interface KeywordSearchProps {
+  onAdd: (ruleId: number, keyword: string) => Promise<void>;
+}
+
+/**
+ * "bed ekli mi?" sorusunu cevaplar. Sorguyu sunucudaki gercek matcher'a gonderir,
+ * cunku eslesme onek tabanli: "bed" listede olmasa da "bedroom" arayan bir kural
+ * onu yakalayabilir. Burada ikinci bir eslestirme kopyasi yazmak, panelin bota
+ * yalan soylemesi demek olurdu.
+ */
+function KeywordSearch({ onAdd }: KeywordSearchProps): JSX.Element {
+  const [query, setQuery] = useState('');
+  const [probe, setProbe] = useState<KeywordProbe | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    const term = query.trim();
+    if (term === '') {
+      setProbe(null);
+      setFailed(false);
+      return;
+    }
+    // Her tusa basista istek atmamak icin kisa gecikme.
+    const timer = setTimeout(() => {
+      api
+        .probeKeyword(term)
+        .then((result) => {
+          setProbe(result);
+          setFailed(false);
+        })
+        .catch(() => setFailed(true));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const term = query.trim();
+  const anyMatch = probe?.results.some((item) => item.matched) ?? false;
+
+  return (
+    <div className="card">
+      <label htmlFor="keyword-search">Kelime ara</label>
+      <input
+        id="keyword-search"
+        type="text"
+        value={query}
+        placeholder="bed"
+        onChange={(event) => setQuery(event.target.value)}
+      />
+      <div className="hint">
+        Bir kelime yazin: hangi kurallarin yakaladigini gorun. Listede birebir yazmasa
+        da yakalanabilir - eslestirme kelime basindan onek ile calisir, yani "bed"
+        terimi "bedside" gonderisini de tutar.
+      </div>
+
+      {failed && <div className="banner err" style={{ marginTop: '0.7rem' }}>Arama basarisiz.</div>}
+
+      {probe && (
+        <div style={{ marginTop: '0.8rem' }}>
+          {!anyMatch && (
+            <div className="banner warn" style={{ marginBottom: '0.5rem' }}>
+              "{probe.query}" hicbir kurala takilmaz.
+            </div>
+          )}
+          {probe.results.map((item) => (
+            <div className="probe-row" key={item.ruleId}>
+              <span className="name">{item.ruleName}</span>
+              {item.matched ? (
+                <span className="badge ok">yakalar</span>
+              ) : (
+                <span className="badge muted">yakalamaz</span>
+              )}
+              {!item.enabled && <span className="badge warn">kural kapali</span>}
+              {item.listedIn === 'include' && <span className="badge">listede</span>}
+              {item.listedIn === 'exclude' && <span className="badge err">haric listesinde</span>}
+              {item.listedIn === null && item.includeHits.length > 0 && (
+                <span className="hint" style={{ display: 'inline' }}>
+                  onek: {item.includeHits.join(', ')}
+                </span>
+              )}
+              {item.excludeHits.length > 0 && (
+                <span className="hint" style={{ display: 'inline' }}>
+                  veto: {item.excludeHits.join(', ')}
+                </span>
+              )}
+              {!item.matched && item.reason !== null && (
+                <span className="hint" style={{ display: 'inline' }}>
+                  {REASON_LABEL[item.reason] ?? item.reason}
+                </span>
+              )}
+              {item.includeHits.length === 0 && (
+                <button
+                  className="ghost"
+                  style={{ marginLeft: 'auto', padding: '0.25rem 0.6rem' }}
+                  onClick={() => void onAdd(item.ruleId, term)}
+                >
+                  bu kurala ekle
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function Rules(): JSX.Element {
   const [rules, setRules] = useState<Rule[]>([]);
@@ -66,6 +259,13 @@ export function Rules(): JSX.Element {
     }
   };
 
+  const addKeyword = async (ruleId: number, keyword: string): Promise<void> => {
+    const rule = rules.find((item) => item.id === ruleId);
+    if (!rule) return;
+    if (rule.includeKeywords.some((item) => sameTerm(item, keyword))) return;
+    await patch(rule, { includeKeywords: [...rule.includeKeywords, keyword] });
+  };
+
   const remove = async (rule: Rule): Promise<void> => {
     if (!confirm(`"${rule.name}" kurali silinsin mi?`)) return;
     setError(null);
@@ -84,6 +284,8 @@ export function Rules(): JSX.Element {
     <>
       <h2>Kurallar</h2>
       <p className="subtitle">Hangi gonderiler eslesecek ve eslesince ne olacak.</p>
+
+      <KeywordSearch onAdd={addKeyword} />
 
       <div className="card">
         <div className="row">
@@ -137,23 +339,20 @@ export function Rules(): JSX.Element {
             </div>
           </div>
 
+          <KeywordEditor
+            label="Iceren kelimeler"
+            keywords={rule.includeKeywords}
+            onChange={(next) => void patch(rule, { includeKeywords: next })}
+          />
+          <KeywordEditor
+            label="Haric tutulan kelimeler"
+            variant="exclude"
+            hint="Bu kelimelerden biri gecerse gonderi eslesmez, iceren kelime tutsa bile."
+            keywords={rule.excludeKeywords}
+            onChange={(next) => void patch(rule, { excludeKeywords: next })}
+          />
+
           <div className="row">
-            <div>
-              <label>Iceren kelimeler</label>
-              <input
-                type="text"
-                defaultValue={rule.includeKeywords.join(', ')}
-                onBlur={(event) => void patch(rule, { includeKeywords: parseList(event.target.value) })}
-              />
-            </div>
-            <div>
-              <label>Haric tutulan kelimeler</label>
-              <input
-                type="text"
-                defaultValue={rule.excludeKeywords.join(', ')}
-                onBlur={(event) => void patch(rule, { excludeKeywords: parseList(event.target.value) })}
-              />
-            </div>
             <div style={{ maxWidth: '9rem' }}>
               <label>Eslesme</label>
               <select

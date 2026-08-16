@@ -45,6 +45,24 @@ export interface TelegramDiscovery {
   chats: TelegramChat[];
 }
 
+export interface RuleProbe {
+  ruleId: number;
+  ruleName: string;
+  enabled: boolean;
+  /** Metni bu terimden ibaret bir gonderi bu kurala takilir miydi. */
+  matched: boolean;
+  reason: string | null;
+  includeHits: string[];
+  excludeHits: string[];
+  /** Terim listede birebir yaziyor mu. Onek eslesmesi varken null olabilir. */
+  listedIn: 'include' | 'exclude' | null;
+}
+
+export interface KeywordProbe {
+  query: string;
+  results: RuleProbe[];
+}
+
 export interface AgentStatus {
   connected: boolean;
   lastHeartbeatAt: number | null;
@@ -135,6 +153,8 @@ export const api = {
   deleteGroup: (id: number) => request<void>(`/groups/${id}`, { method: 'DELETE' }),
 
   listRules: () => request<Rule[]>('/rules'),
+  probeKeyword: (query: string) =>
+    request<KeywordProbe>(`/rules/probe?q=${encodeURIComponent(query)}`),
   createRule: (input: Partial<Rule> & { name: string; includeKeywords: string[] }) =>
     request<Rule>('/rules', { method: 'POST', body: body(input) }),
   updateRule: (id: number, patch: Partial<Rule>) =>
