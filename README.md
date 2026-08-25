@@ -99,6 +99,52 @@ Brave'in Shields katmani Facebook'ta iki soruna yol acabilir:
   calisiyorsa, Brave'in yerel ag engellemesine bakilmali
   (`brave://settings/shields` ve `brave://flags` > private network requests).
 
+## Servis olarak calistirma (Linux)
+
+`npm start`'i terminalden calistirirsan terminal kapaninca surec olmez, arka planda
+sahipsiz kalir (bash'te `huponexit` kapali, systemd'de `KillUserProcesses=no`) — ama onu
+durdurmak icin PID avlamak gerekir. Acilista otomatik baslamasi ve duzgun
+durdurulabilmesi icin systemd --user servisi:
+
+`~/.config/systemd/user/fb-group-watcher.service`
+
+```ini
+[Unit]
+Description=fb-group-watcher sunucusu
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/gokhan/Desktop/Projects/fb-group-watcher
+ExecStart=/home/gokhan/.local/node/bin/node server/dist/index.js
+Environment=NODE_ENV=production
+Environment=FBW_PORT=8787
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+```
+
+`ExecStart` **tam yol** ister — systemd kabugun `PATH`'ini miras almaz (`which node`).
+Servis `server/dist/index.js`'i calistirir; kaynagi degistirdiginde once
+`npm run build:server`, sonra `systemctl --user restart fb-group-watcher`.
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now fb-group-watcher   # simdi baslat + acilista da basla
+systemctl --user status fb-group-watcher
+systemctl --user restart fb-group-watcher
+systemctl --user stop fb-group-watcher
+journalctl --user -u fb-group-watcher -f         # canli log
+```
+
+Oturumu kapattiginda da calismasi icin bir kez `loginctl enable-linger $USER`
+(`loginctl show-user "$USER" -p Linger` → `yes` olmali).
+
+Ayarlanabilir ortam degiskenleri: `FBW_PORT` (8787), `FBW_DB` (`data/watcher.db`),
+`FBW_LOG_LEVEL` (`warn`).
+
 ## Gelistirme
 
 ```bash
@@ -156,4 +202,4 @@ Boylece onarim sirasinda testler rehber olur.
 - **Faz 0-1 tamam:** toplama, dedupe, panel, canli akis, saglik izleme
 - **Faz 2 tamam:** eslestirme motoru, konum filtresi, Telegram bildirimi (eslesme + alarm iletimi)
 - **Faz 3 (siradaki):** otomatik yorum (once dry-run, sonra onayli, sonra tam otomatik)
-- **Faz 4:** DM, acilista otomatik baslatma (Linux/systemd), sertlestirme
+- **Faz 4:** DM, sertlestirme (acilista otomatik baslatma tamam — bkz. *Servis olarak calistirma*)
