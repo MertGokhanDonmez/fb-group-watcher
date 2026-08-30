@@ -2,7 +2,6 @@ import type { ParseStats, RawPost } from '../../../shared/protocol.ts';
 import { detectBlock, type BlockDetection } from './detect.ts';
 import { watchNotifications } from './notifications.ts';
 import { parseFeed } from './parse.ts';
-import { SELECTORS, queryFirst } from './selectors.ts';
 
 /**
  * Grup sayfasinda calisan toplayici.
@@ -14,12 +13,6 @@ export interface CollectRequest {
   type: 'collect';
   fbGroupId: string;
   timeoutMs: number;
-  /**
-   * 'feed'  - grup akisi taramasi (varsayilan): role="feed" kapsayicisi beklenir.
-   * 'post'  - tek gonderinin kalici baglanti sayfasi: feed kapsayicisi olmayabilir,
-   *           herhangi bir article gorunur gorunmez ayristirilir.
-   */
-  mode?: 'feed' | 'post';
 }
 
 export interface CollectResponse {
@@ -31,37 +24,57 @@ export interface CollectResponse {
 }
 
 const POLL_INTERVAL_MS = 250;
+/** Ilk gonderi goruldukten sonra akisin geri kalanina taninan ek sure. */
+const SETTLE_MS = 1_500;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Icerik render edilene kadar bekler. Facebook icerigi asenkron yukledigi icin gerekli. */
-async function waitForContent(timeoutMs: number, mode: 'feed' | 'post'): Promise<boolean> {
+/**
+ * Akis render edilene kadar bekler ve ayristirma sonucunu doner.
+ *
+ * HAZIR OLMA OLCUTU AYRISTIRMANIN KENDISIDIR. Eskiden yalnizca bir article
+ * kapsayicisinin varligina bakiliyordu ve bu yanlisti: Facebook akisi
+ * sanallastiriyor, yani aria-posinset tasiyan kapsayicilar sayfa yuklenir
+ * yuklenmez BOS yer tutucular olarak olusuyor (gercek bir snapshot'ta 10 yuvanin
+ * 7'si bos). Bekleme daha hicbir gonderi render edilmeden ilk bos yuvayi gorup
+ * bitiyor, parseFeed bos yuvalari eliyor ve geriye articlesSeen=0 kaliyordu -
+ * sunucudaki selector saglik takibi bunu gercek bir ariza sanip "hic gonderi
+ * bulunamadi" alarmi uretiyordu. Sorun secicilerde degil, zamanlamadaydi.
+ *
+ * Ilk gonderi bulununca hemen donmuyoruz: akis hala doluyor olabilir ve tek
+ * gonderiyle donmek geri kalanini kacirmak demek. Sayi SETTLE_MS boyunca artmayi
+ * birakinca duruyoruz, en gec dwell suresi dolunca.
+ */
+async function collectFeed(
+  fbGroupId: string,
+  timeoutMs: number,
+): Promise<{ posts: RawPost[]; stats: ParseStats }> {
   const deadline = Date.now() + timeoutMs;
+  let best = parseFeed(document, fbGroupId);
+  let lastGrowthAt = best.posts.length > 0 ? Date.now() : 0;
+
   while (Date.now() < deadline) {
-    if (mode === 'post') {
-      // Kalici baglanti sayfasinda role="feed" cogu zaman yok; gonderi article'i yeterli.
-      if (queryFirst(document, SELECTORS.article)) return true;
-    } else {
-      const feed = queryFirst(document, SELECTORS.feed);
-      if (feed && queryFirst(feed, SELECTORS.article)) return true;
-    }
+    if (lastGrowthAt > 0 && Date.now() - lastGrowthAt >= SETTLE_MS) break;
     await sleep(POLL_INTERVAL_MS);
+
+    const next = parseFeed(document, fbGroupId);
+    if (next.posts.length > best.posts.length) lastGrowthAt = Date.now();
+    // Yeniden render sirasinda sayi gecici olarak dusebilir; en dolu sonucu koruyoruz.
+    if (next.posts.length >= best.posts.length) best = next;
   }
-  return false;
+
+  return best;
 }
 
 async function collect(request: CollectRequest): Promise<CollectResponse> {
   const blocked = detectBlock();
   if (blocked) return { ok: false, blocked };
 
-  const ready = await waitForContent(request.timeoutMs, request.mode ?? 'feed');
-  // Akis hic gelmediyse bile ayristirmayi deniyoruz: sonuctaki articlesSeen=0
-  // bilgisi sunucudaki selector saglik takibini besliyor.
-  const { posts, stats } = parseFeed(document, request.fbGroupId);
+  const { posts, stats } = await collectFeed(request.fbGroupId, request.timeoutMs);
 
-  if (!ready && stats.articlesSeen === 0) {
+  if (stats.articlesSeen === 0) {
     // Engel ekrani gec yuklenmis olabilir; son bir kez bak.
     const late = detectBlock();
     if (late) return { ok: false, blocked: late };

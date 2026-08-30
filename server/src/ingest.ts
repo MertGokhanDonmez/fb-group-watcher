@@ -32,6 +32,17 @@ function resolveLocation(text: string): PostLocation | null {
 
 /** Selector alarmi tek bir bozulma serisinde bir kez gonderilir, her turda degil. */
 let selectorAlertSent = false;
+/**
+ * Son basarili ayristirmanin zamani.
+ *
+ * Alarmin sordugu soru "bu tur bos mu geldi" degil, "bot KOR mu" olmali. Facebook
+ * akisi sanallastirdigi ve arka plan sekmesini kistigi icin tekil turlarin bos
+ * donmesi normaldir ve kendiliginden toparlanir; gercek bir selector bozulmasi ise
+ * toparlanmaz. Ikisini ayiran sey sureklilik, ardisik tur sayisi degil.
+ */
+let lastSuccessfulParseAt = Date.now();
+/** Son tarama turunun zamani; turlar arasindaki bosluklari fark etmek icin. */
+let lastRoundAt = Date.now();
 
 /**
  * Eklentinin getirdigi gonderileri isler.
@@ -87,16 +98,31 @@ export function ingestPosts(channel: string, posts: RawPost[], stats: ParseStats
  */
 function updateSelectorHealth(fbGroupId: string, stats: ParseStats): void {
   const settings = getSettings();
+  const now = Date.now();
+
+  /*
+   * Turlar arasinda uzun bir bosluk varsa o sure KORLUK DEGILDIR: bot bakmiyordu
+   * ki goremesin. Sessiz saatler, eklentinin cevrimdisi olmasi, Chrome'un kapali
+   * kalmasi, sunucunun yeniden baslamasi - hepsi boyle bir bosluk uretir. Sayac
+   * sifirlanmazsa duraklama biter bitmez ilk birkac bos tur, biriken saatlerle
+   * birlesip aninda yanlis alarm veriyor (gercekte yasandi: 7 saatlik sessiz
+   * saatlerin ardindan 08:04'te).
+   */
+  const idleReset = Math.max(5 * 60_000, settings.groupSweepMs);
+  if (now - lastRoundAt > idleReset) lastSuccessfulParseAt = now;
+  lastRoundAt = now;
+
   const parsedNothing = stats.postsParsed === 0;
   const streak = parsedNothing ? getAgentStatus().consecutiveEmptyRounds + 1 : 0;
 
   patchAgentStatus({
-    lastParseAt: Date.now(),
+    lastParseAt: now,
     currentGroup: fbGroupId,
     consecutiveEmptyRounds: streak,
   });
 
   if (!parsedNothing) {
+    lastSuccessfulParseAt = now;
     if (selectorAlertSent) {
       selectorAlertSent = false;
       logEvent('selector_health', 'info', 'Post ayristirma yeniden calisiyor', { fbGroupId });
@@ -104,13 +130,31 @@ function updateSelectorHealth(fbGroupId: string, stats: ParseStats): void {
     return;
   }
 
-  if (streak >= settings.selectorHealthThreshold && !selectorAlertSent) {
+  /*
+   * Bos tur tek basina alarm sebebi degil. Alarm ancak bot bir sure boyunca
+   * HIC ayristiramadiysa anlamli: aralarina basarili turlar serpistirilmis bos
+   * turlar gecici bir render yarisidir, bozulma degil. Bu kapi olmadan alarm
+   * basari/basarisizlik salinimlarinda tekrar tekrar tetikleniyor ve gercek bir
+   * arizayi gorunmez kilacak kadar gurultu uretiyordu (22 saatte 41 kez).
+   *
+   * Esik zamanla olculur ve tarama hizindan turetilir: tam bir tur boyunca hicbir
+   * seyin ayristirilamamasi normaldir, ucu birden kacirilmissa degildir.
+   */
+  const blindMs = Math.max(15 * 60_000, settings.groupSweepMs * 3);
+  const blindFor = now - lastSuccessfulParseAt;
+
+  if (streak >= settings.selectorHealthThreshold && blindFor >= blindMs && !selectorAlertSent) {
     selectorAlertSent = true;
     const message =
       stats.articlesSeen > 0
         ? `Sayfada ${stats.articlesSeen} gonderi goruluyor ama hicbiri ayristirilamadi - selector bozulmus olabilir`
         : 'Grup akisinda hic gonderi bulunamadi - oturum kapanmis veya sayfa yapisi degismis olabilir';
-    logEvent('selector_health', 'error', message, { fbGroupId, stats, streak });
+    logEvent('selector_health', 'error', message, {
+      fbGroupId,
+      stats,
+      streak,
+      blindForMs: blindFor,
+    });
     bus.emitEvent({ type: 'log', level: 'error', message, at: Date.now() });
   }
 }

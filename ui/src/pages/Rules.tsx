@@ -17,9 +17,18 @@ const SUGGESTED_EXCLUDES = [
   'rent',
 ];
 
-/** Ayni terimi iki kez eklemeyi onlemek icin kaba karsilastirma. Otorite sunucudaki matcher. */
+/**
+ * Panel ici karsilastirma icin kaba normalizasyon: kucuk harf + aksan silme.
+ * Sunucudaki normalizeText'in kucuk bir yansimasi; burada sadece "ayni terimi
+ * iki kez ekleme" ve "listeyi suzme" gibi gorsel isler icin kullaniliyor.
+ * Eslesme kararinin otoritesi her zaman sunucudaki matcher.
+ */
+function fold(value: string): string {
+  return value.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
 function sameTerm(a: string, b: string): boolean {
-  return a.trim().toLowerCase() === b.trim().toLowerCase();
+  return fold(a) === fold(b);
 }
 
 interface KeywordEditorProps {
@@ -27,6 +36,8 @@ interface KeywordEditorProps {
   hint?: string;
   keywords: string[];
   variant?: 'include' | 'exclude';
+  /** Bos degilse yalnizca bu metni iceren kelimeler gosterilir. Liste degismez. */
+  filter?: string;
   onChange: (next: string[]) => void;
 }
 
@@ -40,9 +51,14 @@ function KeywordEditor({
   hint,
   keywords,
   variant = 'include',
+  filter = '',
   onChange,
 }: KeywordEditorProps): JSX.Element {
   const [draft, setDraft] = useState('');
+
+  const needle = fold(filter);
+  const visible = needle === '' ? keywords : keywords.filter((item) => fold(item).includes(needle));
+  const filtered = needle !== '' && visible.length !== keywords.length;
 
   const commit = (): void => {
     // Virgul/satir ile toplu yapistirma da desteklenir; tek tek eklemek sart degil.
@@ -59,13 +75,18 @@ function KeywordEditor({
   return (
     <div>
       <label>
-        {label} <span className="badge muted">{keywords.length}</span>
+        {label}{' '}
+        <span className="badge muted">
+          {filtered ? `${visible.length} / ${keywords.length}` : keywords.length}
+        </span>
       </label>
       {keywords.length === 0 ? (
         <div className="chip-empty">(bos)</div>
+      ) : visible.length === 0 ? (
+        <div className="chip-empty">"{filter.trim()}" bu listede gecmiyor</div>
       ) : (
         <div className="chips">
-          {keywords.map((keyword) => (
+          {visible.map((keyword) => (
             <span key={keyword} className={`chip${variant === 'exclude' ? ' excluded' : ''}`}>
               {keyword}
               <button
@@ -105,17 +126,22 @@ const REASON_LABEL: Record<string, string> = {
 };
 
 interface KeywordSearchProps {
+  query: string;
+  onQueryChange: (value: string) => void;
   onAdd: (ruleId: number, keyword: string) => Promise<void>;
 }
 
 /**
- * "bed ekli mi?" sorusunu cevaplar. Sorguyu sunucudaki gercek matcher'a gonderir,
- * cunku eslesme onek tabanli: "bed" listede olmasa da "bedroom" arayan bir kural
- * onu yakalayabilir. Burada ikinci bir eslestirme kopyasi yazmak, panelin bota
- * yalan soylemesi demek olurdu.
+ * Tek arama kutusu, iki isi birden yapar:
+ *
+ *   1. Sorguyu sunucudaki gercek matcher'a gonderip hangi kurallarin yakaladigini
+ *      soyler. Eslesme onek tabanli oldugu icin "bedsheet" listede yazmadan da
+ *      yakalanabiliyor; burada ikinci bir eslestirme kopyasi yazmak panelin bota
+ *      yalan soylemesi olurdu.
+ *   2. Asagidaki kelime listelerini suzer (query yukari tasindigi icin). 63
+ *      terimlik bir listede "neyi filtreliyorum" sorusu gozle cevaplanamiyor.
  */
-function KeywordSearch({ onAdd }: KeywordSearchProps): JSX.Element {
-  const [query, setQuery] = useState('');
+function KeywordSearch({ query, onQueryChange, onAdd }: KeywordSearchProps): JSX.Element {
   const [probe, setProbe] = useState<KeywordProbe | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -145,17 +171,25 @@ function KeywordSearch({ onAdd }: KeywordSearchProps): JSX.Element {
   return (
     <div className="card">
       <label htmlFor="keyword-search">Kelime ara</label>
-      <input
-        id="keyword-search"
-        type="text"
-        value={query}
-        placeholder="bed"
-        onChange={(event) => setQuery(event.target.value)}
-      />
+      <div className="row">
+        <input
+          id="keyword-search"
+          type="text"
+          value={query}
+          placeholder="bed"
+          onChange={(event) => onQueryChange(event.target.value)}
+        />
+        {query !== '' && (
+          <button className="ghost" onClick={() => onQueryChange('')}>
+            Temizle
+          </button>
+        )}
+      </div>
       <div className="hint">
-        Bir kelime yazin: hangi kurallarin yakaladigini gorun. Listede birebir yazmasa
-        da yakalanabilir - eslestirme kelime basindan onek ile calisir, yani "bed"
-        terimi "bedside" gonderisini de tutar.
+        Bir kelime yazin: hangi kurallarin yakaladigini gorursunuz ve asagidaki kelime
+        listeleri o kelimeye gore suzulur. Listede birebir yazmasa da yakalanabilir -
+        eslestirme kelime basindan onek ile calisir, yani "bed" terimi "bedside"
+        gonderisini de tutar.
       </div>
 
       {failed && <div className="banner err" style={{ marginTop: '0.7rem' }}>Arama basarisiz.</div>}
@@ -217,6 +251,8 @@ export function Rules(): JSX.Element {
   const [name, setName] = useState('');
   const [keywords, setKeywords] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // Arama kutusu hem kural sorgusunu hem asagidaki listelerin suzgecini besliyor.
+  const [query, setQuery] = useState('');
 
   const reload = async (): Promise<void> => {
     const [nextRules, nextGroups, nextTemplates] = await Promise.all([
@@ -285,7 +321,7 @@ export function Rules(): JSX.Element {
       <h2>Kurallar</h2>
       <p className="subtitle">Hangi gonderiler eslesecek ve eslesince ne olacak.</p>
 
-      <KeywordSearch onAdd={addKeyword} />
+      <KeywordSearch query={query} onQueryChange={setQuery} onAdd={addKeyword} />
 
       <div className="card">
         <div className="row">
@@ -342,6 +378,7 @@ export function Rules(): JSX.Element {
           <KeywordEditor
             label="Iceren kelimeler"
             keywords={rule.includeKeywords}
+            filter={query}
             onChange={(next) => void patch(rule, { includeKeywords: next })}
           />
           <KeywordEditor
@@ -349,6 +386,7 @@ export function Rules(): JSX.Element {
             variant="exclude"
             hint="Bu kelimelerden biri gecerse gonderi eslesmez, iceren kelime tutsa bile."
             keywords={rule.excludeKeywords}
+            filter={query}
             onChange={(next) => void patch(rule, { excludeKeywords: next })}
           />
 
@@ -476,30 +514,44 @@ export function Rules(): JSX.Element {
             </div>
           </div>
 
-          <label>Gruplar</label>
-          <div className="checks">
-            {groups.length === 0 && <span className="hint">Once grup ekleyin.</span>}
-            {groups.map((group) => (
-              <label key={group.id}>
-                <input
-                  type="checkbox"
-                  checked={rule.groupIds.includes(group.id)}
-                  onChange={(event) =>
-                    void patch(rule, {
-                      groupIds: event.target.checked
-                        ? [...rule.groupIds, group.id]
-                        : rule.groupIds.filter((id) => id !== group.id),
-                    })
-                  }
-                />
-                {group.name}
-              </label>
-            ))}
-          </div>
+          {/*
+            Grup secimi normalde gosterilmiyor: her kuralda ayni gruplari tekrar
+            isaretlemek anlamsizdi ve bos liste zaten "tum aktif gruplar" demek.
+            Gruplar tek yerden, Gruplar sayfasindan yonetiliyor. Yalnizca bir kural
+            gercekten daraltilmissa kontrol geri geliyor - aksi halde calisan bir
+            kisitlamayi arayuzde gizlemis olurduk.
+          */}
+          {rule.groupIds.length > 0 && (
+            <>
+              <label>Gruplar (bu kural daraltilmis)</label>
+              <div className="checks">
+                {groups.map((group) => (
+                  <label key={group.id}>
+                    <input
+                      type="checkbox"
+                      checked={rule.groupIds.includes(group.id)}
+                      onChange={(event) =>
+                        void patch(rule, {
+                          groupIds: event.target.checked
+                            ? [...rule.groupIds, group.id]
+                            : rule.groupIds.filter((id) => id !== group.id),
+                        })
+                      }
+                    />
+                    {group.name}
+                  </label>
+                ))}
+                <button className="ghost" onClick={() => void patch(rule, { groupIds: [] })}>
+                  Tum gruplara uygula
+                </button>
+              </div>
+            </>
+          )}
           <div className="hint">
-            Hicbiri secilmezse kural tum aktif gruplara uygulanir. Mesafe filtresi icin
-            Ayarlar'da ev konumu secili olmali; konumu metinden cikarilamayan gonderiler
-            elenmez (bilinmeyen konum yuzunden firsat kacirmamak icin).
+            {rule.groupIds.length === 0 && 'Tum aktif gruplara uygulanir. '}
+            Mesafe filtresi icin Ayarlar'da ev konumu secili olmali; konumu metinden
+            cikarilamayan gonderiler elenmez (bilinmeyen konum yuzunden firsat
+            kacirmamak icin).
           </div>
         </div>
       ))}

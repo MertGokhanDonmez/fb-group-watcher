@@ -271,7 +271,6 @@ async function requestCollect(
   tabId: number,
   fbGroupId: string,
   timeoutMs: number,
-  mode: 'feed' | 'post',
 ): Promise<CollectResponse | null> {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
@@ -279,7 +278,6 @@ async function requestCollect(
         type: 'collect',
         fbGroupId,
         timeoutMs,
-        mode,
       })) as CollectResponse;
     } catch {
       await sleep(750);
@@ -359,7 +357,7 @@ async function visitPost(target: { permalink: string; fbGroupId: string }): Prom
   else await chrome.tabs.update(tabId, { url: target.permalink, active: false });
   await loaded;
 
-  const response = await requestCollect(tabId, target.fbGroupId, POST_VISIT_DWELL_MS, 'post');
+  const response = await requestCollect(tabId, target.fbGroupId, POST_VISIT_DWELL_MS);
   deliverCollectResponse(response, target.fbGroupId, target.permalink);
 }
 
@@ -484,7 +482,7 @@ async function visitGroup(group: AgentGroupConfig): Promise<void> {
   else await chrome.tabs.update(tabId, { url: group.url, active: false });
   await loaded;
 
-  const response = await requestCollect(tabId, group.fbGroupId, group.dwellMs, 'feed');
+  const response = await requestCollect(tabId, group.fbGroupId, group.dwellMs);
   deliverCollectResponse(response, group.fbGroupId, group.url);
 }
 
