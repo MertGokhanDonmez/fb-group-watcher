@@ -4,6 +4,7 @@ import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
 import { handleAgentConnection } from './agent/hub.ts';
 import { CONFIG } from './config.ts';
+import { debugRoutes } from './routes/debug.ts';
 import { feedRoutes } from './routes/feed.ts';
 import { groupRoutes } from './routes/groups.ts';
 import { ruleRoutes } from './routes/rules.ts';
@@ -15,7 +16,12 @@ import { templateRoutes } from './routes/templates.ts';
  * app.inject() ile route'lari gercek soket acmadan calistirabilir.
  */
 export async function buildApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: { level: process.env.FBW_LOG_LEVEL ?? 'warn' } });
+  const app = Fastify({
+    logger: { level: process.env.FBW_LOG_LEVEL ?? 'warn' },
+    // Panelin canli akisi (SSE) ve eklentinin soketi kendiliginden hic kapanmaz;
+    // kapanista beklenirlerse app.close() asla bitmez ve Ctrl+C sunucuyu durduramaz.
+    forceCloseConnections: true,
+  });
 
   /**
    * Fastify'in varsayilan JSON ayristiricisi, Content-Type: application/json
@@ -49,6 +55,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(ruleRoutes);
   await app.register(templateRoutes);
   await app.register(feedRoutes);
+  await app.register(debugRoutes);
 
   app.get('/agent', { websocket: true }, (socket) => {
     handleAgentConnection(socket);

@@ -132,6 +132,7 @@ describe('rules ve templates', () => {
       dailyCap: 20,
       maxPostAgeMin: 30,
       maxDistanceKm: null,
+      searchMarketplace: true,
       priority: 1,
       groupIds: [group.id],
     });

@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { pushConfigToAgent } from '../agent/hub.ts';
 import { createRule, deleteRule, listRules, updateRule } from '../repo/rules.ts';
 
 const keywordList = z.array(z.string().trim().min(1)).max(200);
@@ -39,6 +40,7 @@ const baseSchema = z.object({
   dailyCap: z.number().int().min(0).max(500),
   maxPostAgeMin: z.number().int().min(1).max(1440),
   maxDistanceKm: z.number().min(0.1).max(200).nullable(),
+  searchMarketplace: z.boolean(),
   priority: z.number().int().min(0).max(10),
   groupIds: z.array(z.number().int().positive()).max(100),
 });
@@ -57,6 +59,7 @@ const createSchema = baseSchema.partial({
   dailyCap: true,
   maxPostAgeMin: true,
   maxDistanceKm: true,
+  searchMarketplace: true,
   priority: true,
   groupIds: true,
 });
@@ -98,13 +101,17 @@ export const ruleRoutes: FastifyPluginAsync = async (app) => {
       dailyCap: 20,
       maxPostAgeMin: 30,
       maxDistanceKm: null,
+      searchMarketplace: true,
       priority: 1,
       groupIds: [],
       ...parsed.data,
     };
     const problem = missingTemplate(input);
     if (problem) return reply.status(400).send({ error: problem });
-    return reply.status(201).send(createRule(input));
+    const created = createRule(input);
+    // Anahtar kelimeler Marketplace arama listesini belirliyor; eklenti yeni plani almali.
+    pushConfigToAgent();
+    return reply.status(201).send(created);
   });
 
   app.patch('/api/rules/:id', async (request, reply) => {
@@ -119,13 +126,16 @@ export const ruleRoutes: FastifyPluginAsync = async (app) => {
     const problem = missingTemplate({ ...existing, ...body.data });
     if (problem) return reply.status(400).send({ error: problem });
 
-    return updateRule(params.data.id, body.data);
+    const updated = updateRule(params.data.id, body.data);
+    pushConfigToAgent();
+    return updated;
   });
 
   app.delete('/api/rules/:id', async (request, reply) => {
     const params = idParam.safeParse(request.params);
     if (!params.success) return reply.status(400).send({ error: 'Gecersiz id' });
     if (!deleteRule(params.data.id)) return reply.status(404).send({ error: 'Kural bulunamadi' });
+    pushConfigToAgent();
     return reply.status(204).send();
   });
 };

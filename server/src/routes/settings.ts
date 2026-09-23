@@ -5,8 +5,12 @@ import { pushConfigToAgent } from '../agent/hub.ts';
 import { getAgentStatus, isAgentAlive } from '../agent/status.ts';
 import { logEvent } from '../repo/events.ts';
 import { listAreas } from '../location/extract.ts';
-import { sendTelegramMessage } from '../notify/telegram.ts';
+import { findLatestChat, sendTelegramMessage } from '../notify/telegram.ts';
 import { ensureAgentToken, getSettings, updateSettings } from '../repo/settings.ts';
+
+const findChatSchema = z.object({ botToken: z.string().trim().min(1).optional() }).strict();
+
+const phraseList = z.array(z.string().trim().min(1).max(100)).max(300);
 
 const patchSchema = z
   .object({
@@ -31,6 +35,22 @@ const patchSchema = z
     jitterRatio: z.number().min(0).max(1),
     selectorHealthThreshold: z.number().int().min(1).max(50),
     heartbeatTimeoutSec: z.number().int().min(30).max(3600),
+    marketplaceEnabled: z.boolean(),
+    // Sehir kisaltmasi veya sayisal konum kimligi; URL yoluna girdigi icin sinirli karakter.
+    marketplaceLocation: z.string().trim().regex(/^[A-Za-z0-9._-]{1,80}$/),
+    marketplaceMaxPrice: z.number().min(0).max(100_000),
+    // Yalnizca Facebook Marketplace adresi kabul edilir; eklenti bu adresi dogrudan acar.
+    marketplaceBrowseUrl: z
+      .string()
+      .trim()
+      .refine((value) => value === '' || /^https:\/\/www\.facebook\.com\/marketplace\//.test(value), {
+        message: 'https://www.facebook.com/marketplace/ ile baslamali',
+      }),
+    marketplaceBrowseIntervalMs: z.number().int().min(120_000).max(3_600_000),
+    marketplaceSearchEnabled: z.boolean(),
+    marketplaceSearchIntervalMs: z.number().int().min(900_000).max(86_400_000),
+    marketplaceFreePhrases: phraseList,
+    marketplaceNotFreePhrases: phraseList,
   })
   .partial()
   .strict();
@@ -88,6 +108,28 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
     }
     logEvent('telegram', 'info', 'Test bildirimi gonderildi');
     return { ok: true };
+  });
+
+  /**
+   * Chat ID'yi bota en son yazan sohbetten bulur ve kaydeder.
+   * Panel token'i govdede gonderir: token alani kutudan cikinca kaydedildigi icin
+   * kayit istegi bu istekle yarisabilir; govdedeki deger bu yarisi ortadan kaldirir.
+   */
+  app.post('/api/settings/telegram-find-chat', async (request, reply) => {
+    const parsed = findChatSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return reply.status(400).send({ error: 'Gecersiz istek' });
+
+    const botToken = parsed.data.botToken ?? getSettings().telegramBotToken;
+    if (botToken === '') return reply.status(400).send({ error: 'Once bot token girilmeli' });
+
+    const result = await findLatestChat(botToken);
+    if (!result.ok) {
+      logEvent('telegram', 'warn', `Chat ID bulunamadi: ${result.error}`);
+      return reply.status(502).send({ error: result.error });
+    }
+    updateSettings({ telegramBotToken: botToken, telegramChatId: result.chatId });
+    logEvent('telegram', 'info', `Chat ID bulundu ve kaydedildi: ${result.chatId} (${result.name})`);
+    return { chatId: result.chatId, name: result.name };
   });
 
   app.get('/api/status', async () => {

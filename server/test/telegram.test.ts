@@ -5,6 +5,7 @@ import { bus } from '../src/bus.ts';
 import { ingestPosts } from '../src/ingest.ts';
 import {
   escapeHtml,
+  findLatestChat,
   formatMatchMessage,
   notifyMatch,
   sendTelegramMessage,
@@ -77,6 +78,7 @@ beforeAll(() => {
     dailyCap: 20,
     maxPostAgeMin: 30,
     maxDistanceKm: null,
+    searchMarketplace: true,
     priority: 1,
     groupIds: [],
   });
@@ -140,6 +142,42 @@ describe('sendTelegramMessage', () => {
     const result = await sendTelegramMessage('merhaba');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain('ECONNREFUSED');
+  });
+});
+
+describe('findLatestChat', () => {
+  const updates = (result: unknown[]): Response =>
+    new Response(JSON.stringify({ ok: true, result }), { status: 200 });
+
+  it('bota en son yazan sohbeti doner', async () => {
+    fetchMock.mockResolvedValueOnce(
+      updates([
+        { update_id: 1, message: { chat: { id: 111, type: 'private', first_name: 'Eski' } } },
+        { update_id: 2, message: { chat: { id: 222, type: 'private', first_name: 'Mert', last_name: 'D' } } },
+      ]),
+    );
+    expect(await findLatestChat('abc')).toEqual({ ok: true, chatId: '222', name: 'Mert D' });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://api.telegram.org/botabc/getUpdates');
+  });
+
+  it('mesaj yoksa bota yazmayi soyler', async () => {
+    fetchMock.mockResolvedValueOnce(updates([]));
+    const result = await findLatestChat('abc');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('Start');
+  });
+
+  it('yanlis tokende API hatasini yuzeye cikarir', async () => {
+    fetchMock.mockResolvedValueOnce(telegramError(401, 'Unauthorized'));
+    expect(await findLatestChat('yanlis')).toEqual({
+      ok: false,
+      error: 'Telegram API 401: Unauthorized',
+    });
+  });
+
+  it('token yoksa API cagrisi yapmaz', async () => {
+    expect((await findLatestChat('  ')).ok).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

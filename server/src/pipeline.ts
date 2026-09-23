@@ -7,6 +7,11 @@ import { listEnabledRules } from './repo/rules.ts';
 import { getSettings } from './repo/settings.ts';
 import type { Post } from './types.ts';
 
+/** Marketplace ilaninda anahtar kelime baslikta da olabilir; aciklamaya eklenir. */
+function matchableText(post: Post): string {
+  return post.title ? `${post.title}\n${post.text}` : post.text;
+}
+
 /**
  * Yeni yakalanan gonderileri kurallardan gecirir.
  *
@@ -21,7 +26,13 @@ export function processNewPosts(posts: Post[]): void {
 
   for (const post of posts) {
     for (const rule of rules) {
-      if (!ruleCoversGroup(rule, post.groupId)) continue;
+      if (post.kind === 'marketplace') {
+        // Grup secimi Marketplace'e uygulanmaz; kuralin Marketplace'i kapsamasi yeterli.
+        // Aciklamada bedava dogrulanmamis ilan hicbir kuralla eslesmez: fiyat alani kanit degil.
+        if (!rule.searchMarketplace || post.freeVerified !== true) continue;
+      } else if (!ruleCoversGroup(rule, post.groupId)) {
+        continue;
+      }
 
       // Bayat gonderiye tepki vermek anlamsiz: bedava esya saatler icinde gider.
       if (isTooOld(post.postedAt, rule.maxPostAgeMin)) continue;
@@ -32,7 +43,7 @@ export function processNewPosts(posts: Post[]): void {
         if (post.distanceKm > rule.maxDistanceKm) continue;
       }
 
-      const result = matchRule(post.text, rule, options);
+      const result = matchRule(matchableText(post), rule, options);
       if (!result.matched) continue;
 
       const match = createMatchIfNew(post.id, rule.id, result.keywords, 'pending');

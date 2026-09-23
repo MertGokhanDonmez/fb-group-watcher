@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, type Area, type Settings } from '../api.ts';
+import { parseList } from '../format.ts';
 
 interface Props {
   onSaved: () => void;
@@ -35,6 +36,7 @@ export function SettingsPage({ onSaved }: Props): JSX.Element {
   const [areas, setAreas] = useState<Area[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const tokenInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     void (async () => {
@@ -64,6 +66,20 @@ export function SettingsPage({ onSaved }: Props): JSX.Element {
       await api.telegramTest();
       setMessage('Test mesaji gonderildi - Telegram\'i kontrol edin');
       setTimeout(() => setMessage(null), 4000);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  };
+
+  /** Bota en son yazan sohbetin ID'sini sunucuya buldurur ve kaydettirir. */
+  const findChat = async (): Promise<void> => {
+    setError(null);
+    try {
+      const token = tokenInput.current?.value.trim() || undefined;
+      const found = await api.telegramFindChat(token);
+      setSettings(await api.getSettings());
+      setMessage(`Chat ID bulundu: ${found.chatId} (${found.name})`);
+      setTimeout(() => setMessage(null), 5000);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
@@ -117,6 +133,7 @@ export function SettingsPage({ onSaved }: Props): JSX.Element {
           <div>
             <label>Bot token</label>
             <input
+              ref={tokenInput}
               type="password"
               defaultValue={settings.telegramBotToken}
               placeholder="BotFather'dan alinan token"
@@ -126,6 +143,8 @@ export function SettingsPage({ onSaved }: Props): JSX.Element {
           <div>
             <label>Chat ID</label>
             <input
+              // Otomatik bulununca alan yeni degerle yeniden olussun diye key degere bagli.
+              key={settings.telegramChatId}
               type="text"
               defaultValue={settings.telegramChatId}
               placeholder="orn. 123456789"
@@ -133,14 +152,25 @@ export function SettingsPage({ onSaved }: Props): JSX.Element {
             />
           </div>
         </div>
+        <ol className="hint" style={{ paddingLeft: '1.2rem' }}>
+          <li>Telegram'da @BotFather'a <code>/newbot</code> yazin; isim ve sonu "bot" ile biten bir kullanici adi verin.</li>
+          <li>BotFather'in verdigi tokeni yukaridaki alana yapistirin.</li>
+          <li>Telegram'da kendi botunuzu acip <strong>Start</strong>'a basin veya bir mesaj atin (bot size ancak bundan sonra yazabilir).</li>
+          <li><strong>Chat ID'yi bul</strong>'a basin: bota en son yazan sohbetin ID'si otomatik kaydedilir.</li>
+          <li><strong>Test mesaji gonder</strong> ile dogrulayin.</li>
+        </ol>
         <div className="hint">
-          Telegram'da @BotFather ile bot olusturun, tokeni buraya girin. Chat ID icin bota bir mesaj
-          atip @userinfobot kullanabilirsiniz. Eslesme bildirimi icin kurallarda
-          "Bildirim gonder" secenegi acik olmali.
+          Bot yalnizca son 24 saatte gelen mesajlari gorur; bulamazsa bota yeni bir mesaj atip tekrar deneyin.
+          Eslesme bildirimi icin kurallarda "Bildirim gonder" secenegi acik olmali.
         </div>
-        <button className="ghost" style={{ marginTop: '0.7rem' }} onClick={() => void telegramTest()}>
-          Test mesaji gonder
-        </button>
+        <div style={{ marginTop: '0.7rem', display: 'flex', gap: '0.6rem' }}>
+          <button className="ghost" onClick={() => void findChat()}>
+            Chat ID'yi bul
+          </button>
+          <button className="ghost" onClick={() => void telegramTest()}>
+            Test mesaji gonder
+          </button>
+        </div>
       </div>
 
       <div className="card">
@@ -248,6 +278,113 @@ export function SettingsPage({ onSaved }: Props): JSX.Element {
           sayfayi <strong>yenilemez</strong> - yeni gonderileri Facebook kendisi o sekmeye iter.
           Ana yakalama yolu budur; grup taramasi yalnizca guvenlik agidir. Calismasi icin her
           grubun Facebook ayarlarindan <strong>"Tum gonderiler"</strong> bildirimini acmalisiniz.
+        </div>
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginTop: 0, fontSize: '1rem' }}>Marketplace</h3>
+        <div className="checks">
+          <label>
+            <input
+              type="checkbox"
+              checked={settings.marketplaceEnabled}
+              onChange={(event) => void save({ marketplaceEnabled: event.target.checked })}
+            />
+            Marketplace'i izle
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={settings.marketplaceSearchEnabled}
+              onChange={(event) => void save({ marketplaceSearchEnabled: event.target.checked })}
+            />
+            Yedek anahtar kelime aramalari
+          </label>
+        </div>
+        <div className="grid">
+          <div>
+            <label>Konum</label>
+            <input
+              type="text"
+              defaultValue={settings.marketplaceLocation}
+              onBlur={(event) => void save({ marketplaceLocation: event.target.value.trim() })}
+            />
+            <div className="hint">Facebook'un sehir kisaltmasi (prague) veya sayisal konum kimligi</div>
+          </div>
+          <div>
+            <label>Aday icin max fiyat</label>
+            <input
+              type="number"
+              min={0}
+              max={100_000}
+              defaultValue={String(settings.marketplaceMaxPrice)}
+              onBlur={(event) => void save({ marketplaceMaxPrice: Number(event.target.value) })}
+            />
+            <div className="hint">Ustundeki ilanlar hic acilmaz. Bedava karari fiyata bakmaz</div>
+          </div>
+          <div>
+            <label>Genel sayfa araligi (ms)</label>
+            <input
+              type="number"
+              min={120_000}
+              max={3_600_000}
+              step={60_000}
+              defaultValue={String(settings.marketplaceBrowseIntervalMs)}
+              onBlur={(event) => void save({ marketplaceBrowseIntervalMs: Number(event.target.value) })}
+            />
+            <div className="hint">Ana yol. 300000 = 5 dk, her turda tek sayfa</div>
+          </div>
+          <div>
+            <label>Yedek arama araligi (ms)</label>
+            <input
+              type="number"
+              min={900_000}
+              max={86_400_000}
+              step={300_000}
+              defaultValue={String(settings.marketplaceSearchIntervalMs)}
+              onBlur={(event) => void save({ marketplaceSearchIntervalMs: Number(event.target.value) })}
+            />
+            <div className="hint">Her kelime bu surede bir kez aranir. 3600000 = 1 saat</div>
+          </div>
+        </div>
+        <div>
+          <label>Genel sayfa adresi (istege bagli)</label>
+          <input
+            type="text"
+            defaultValue={settings.marketplaceBrowseUrl}
+            placeholder="Bos = konum ve fiyattan otomatik"
+            onBlur={(event) => void save({ marketplaceBrowseUrl: event.target.value.trim() })}
+          />
+          <div className="hint">
+            Otomatik adres dogru sonuc vermezse: tarayicida Marketplace'i acip konumu, max fiyati ve
+            "en yeni" siralamasini ayarlayin, adres cubugundaki adresi buraya yapistirin.
+          </div>
+        </div>
+        <div className="row">
+          <div>
+            <label>Bedava ifadeleri (satir basina bir)</label>
+            <textarea
+              rows={8}
+              defaultValue={settings.marketplaceFreePhrases.join('\n')}
+              onBlur={(event) => void save({ marketplaceFreePhrases: parseList(event.target.value) })}
+            />
+            <div className="hint">Sonu * ile biten ifade onek olarak aranir (daruj* = daruji, darujeme)</div>
+          </div>
+          <div>
+            <label>Bedava sayilmayan kaliplar</label>
+            <textarea
+              rows={8}
+              defaultValue={settings.marketplaceNotFreePhrases.join('\n')}
+              onBlur={(event) => void save({ marketplaceNotFreePhrases: parseList(event.target.value) })}
+            />
+            <div className="hint">Bedava ifadesi aranmadan once metinden silinir (doprava zdarma = kargo bedava)</div>
+          </div>
+        </div>
+        <div className="hint">
+          Marketplace kendi sekmesinde calisir. Genel sayfadaki kartlardan yalnizca basligi bir
+          kurala uyanlar acilir; yedek aramalar kelimenin yalnizca aciklamada gectigi ilanlar icindir.
+          Fiyat alanindaki "Zdarma" / "0 Kč" kanit sayilmaz: ilan yalnizca <strong>aciklamasinda</strong>{' '}
+          bedava ifadesi geciyorsa eslesir.
         </div>
       </div>
 

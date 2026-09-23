@@ -78,6 +78,17 @@ dogrulama/checkpoint tetikleyebilir - yani tam da kacinmak istedigimiz sey.
 
 Panelde **Eklenti: Cevrimici** rozetini gordugunde baglanti kurulmustur.
 
+### Telegram bildirimi
+
+1. Telegram'da **@BotFather** > `/newbot` > isim ve sonu `bot` ile biten kullanici adi
+2. Verilen tokeni panelde **Ayarlar > Telegram bildirimi > Bot token** alanina yapistir
+3. Telegram'da kendi botunu ac, **Start**'a bas (veya bir mesaj at)
+4. Panelde **Chat ID'yi bul**: bota en son yazan sohbetin ID'si otomatik kaydedilir
+5. **Test mesaji gonder** ile dogrula
+
+Bot yalnizca son 24 saatte gelen mesajlari gorur; "mesaj yok" derse bota yeni
+bir mesaj atip tekrar dene.
+
 ### Gruplarda bildirimi acmak (sart)
 
 Bildirim izleme yalnizca Facebook sana bildirim gonderiyorsa ise yarar. Her izlenen grup icin:
@@ -86,6 +97,28 @@ Bildirim izleme yalnizca Facebook sana bildirim gonderiyorsa ise yarar. Her izle
 2. **Bildirimler** (zil) menusu > **Tum gonderiler** secenegini isaretle
 
 Bunu yapmazsan bot yalnizca yavas grup taramasina duser ve gecikme artar.
+
+### Marketplace
+
+Kurallar (kural bazinda "Marketplace'te de ara" aciksa) Marketplace'te de calisir.
+Marketplace'in bildirim mekanizmasi olmadigi icin tek yol periyodik taramadir ve
+kendi sabitlenmis sekmesinde, grup turundan bagimsiz yurur:
+
+1. **Genel sayfa (ana yol):** 5 dakikada bir tek sayfa - anahtar kelimesiz, en yeni
+   once, son 24 saat, `max fiyat` (varsayilan 10 Kc), yaricap = kurallarin en genis
+   mesafesi. Kartlardan yalnizca **basligi** bir kurala uyanlar aday olur.
+2. **Yedek aramalar:** her anahtar kelime saatte bir aranir. Kelime yalnizca
+   aciklamada gecen ilanlari (baslik "Nabytek", aciklamada "stul") bunlar yakalar.
+   Ayarlar'dan kapatilabilir.
+3. Kartta aciklama yok. Adaylarin ilan sayfasi ayrica acilir (sayfa basina en
+   fazla 4, kalanlar sonraki turda).
+4. Ilan **yalnizca aciklamasinda** bedava ifadesi geciyorsa eslesir. Fiyat
+   alanindaki "Zdarma" / "0 Kc" kanit sayilmaz. "doprava zdarma" gibi kaliplar
+   once metinden silinir. Iki liste de Ayarlar > Marketplace'ten duzenlenir.
+
+Genel sayfanin otomatik adresi (`/marketplace/<konum>/?sortBy=...&maxPrice=...`)
+gercek sayfada dogrulanmadi. Sonuclar yanlissa tarayicida filtreleri elle ayarlayip
+adres cubugundaki adresi Ayarlar > Marketplace > "Genel sayfa adresi"ne yapistir.
 
 ### Brave kullaniyorsan
 
@@ -138,6 +171,10 @@ Onarim icin gercek bir snapshot al:
 3. `extension/test/fixtures/` altina kaydet ve `parse.test.ts` icinde referans ver
 
 Boylece onarim sirasinda testler rehber olur.
+
+Marketplace ayristiricisi (`extension/src/content/marketplace.ts`) su an sentetik
+HTML ile test ediliyor. Gercek bir arama sayfasi ve bir ilan sayfasi snapshot'i ayni
+yontemle alinip `extension/test/fixtures/` altina eklenmeli.
 
 ## Proje yapisi
 

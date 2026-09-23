@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { execute, queryAll } from '../db/index.ts';
+import { execute, parseJsonArray, queryAll } from '../db/index.ts';
 
 /**
  * Tum ayarlar tek bir key/value tablosunda tutulur.
@@ -62,9 +62,94 @@ export interface Settings {
   selectorHealthThreshold: number;
   /** Bu sure heartbeat gelmezse eklenti cevrimdisi sayilir (saniye). */
   heartbeatTimeoutSec: number;
+
+  /** Kurallarin anahtar kelimeleri Marketplace'te de aransin. */
+  marketplaceEnabled: boolean;
+  /** Facebook'un sehir kisaltmasi ("prague") veya sayisal konum kimligi. */
+  marketplaceLocation: string;
+  /** Bu tutarin ustundeki ilanlar aday olmaz. Bedava karari fiyata DEGIL aciklamaya bakar. */
+  marketplaceMaxPrice: number;
+  /**
+   * Genel sayfa adresi. Bos = konum ve fiyat filtresinden otomatik uretilir.
+   * Facebook otomatik adresteki filtrelere uymazsa tarayicida filtreleri ayarlayip
+   * adres cubugundaki adres buraya yapistirilir.
+   */
+  marketplaceBrowseUrl: string;
+  /** Genel sayfanin yeniden taranma araligi (ms). Ana yakalama yolu budur. */
+  marketplaceBrowseIntervalMs: number;
+  /** Yedek anahtar kelime aramalari: yalnizca aciklamada gecen kelimeleri yakalar. */
+  marketplaceSearchEnabled: boolean;
+  /** Her anahtar kelimenin yeniden aranma araligi (ms). Aramalar bu sureye yayilir. */
+  marketplaceSearchIntervalMs: number;
+  /** Aciklamada gecmesi gereken bedava ifadeleri. Sonu '*' ile biten ifade onek olarak aranir. */
+  marketplaceFreePhrases: string[];
+  /**
+   * Bedava ifadesi iceren ama bedava anlamina gelmeyen kaliplar ("doprava zdarma").
+   * Bedava ifadeleri aranmadan once metinden silinir.
+   */
+  marketplaceNotFreePhrases: string[];
 }
 
-type SettingKind = 'string' | 'number' | 'boolean';
+type SettingKind = 'string' | 'number' | 'boolean' | 'list';
+
+/** Varsayilan bedava ifadeleri. Cekce, Slovakca, Lehce, Ingilizce, Almanca, Turkce. */
+export const DEFAULT_FREE_PHRASES = [
+  'zdarma',
+  'zadarmo',
+  'darmo',
+  'daruj*',
+  'darmow*',
+  'za odvoz',
+  'za čokoládu',
+  'za symbolickou cenu',
+  'free',
+  'giveaway',
+  'giving away',
+  'give away',
+  'gratis',
+  'kostenlos',
+  'umsonst',
+  'zu verschenken',
+  'bedava',
+  'ücretsiz',
+];
+
+/**
+ * Bedava ifadesi gecen ama esyanin bedava oldugunu gostermeyen kaliplar.
+ * Cek ilanlarinda en sik yanlis pozitif "doprava zdarma" (kargo bedava);
+ * Ingilizcede ise "smoke-free home" gibi ifadeler.
+ */
+export const DEFAULT_NOT_FREE_PHRASES = [
+  'doprava zdarma',
+  'zdarma doprava',
+  'dovoz zdarma',
+  'odvoz zdarma',
+  'doručení zdarma',
+  'poštovné zdarma',
+  'poštovné a balné zdarma',
+  'zásilkovna zdarma',
+  'není zdarma',
+  'nejsou zdarma',
+  'nie je zdarma',
+  'free shipping',
+  'shipping free',
+  'free delivery',
+  'delivery free',
+  'not free',
+  'smoke free',
+  'pet free',
+  'hands free',
+  'bpa free',
+  'gluten free',
+  'stress free',
+  'free standing',
+  'free time',
+  'kostenloser versand',
+  'versand kostenlos',
+  'ücretsiz kargo',
+  'kargo ücretsiz',
+  'kargo bedava',
+];
 
 const SCHEMA: { [K in keyof Settings]: { key: string; kind: SettingKind; fallback: Settings[K] } } = {
   agentToken: { key: 'agent_token', kind: 'string', fallback: '' },
@@ -89,12 +174,30 @@ const SCHEMA: { [K in keyof Settings]: { key: string; kind: SettingKind; fallbac
   jitterRatio: { key: 'jitter_ratio', kind: 'number', fallback: 0.35 },
   selectorHealthThreshold: { key: 'selector_health_threshold', kind: 'number', fallback: 3 },
   heartbeatTimeoutSec: { key: 'heartbeat_timeout_sec', kind: 'number', fallback: 300 },
+  marketplaceEnabled: { key: 'marketplace_enabled', kind: 'boolean', fallback: true },
+  marketplaceLocation: { key: 'marketplace_location', kind: 'string', fallback: 'prague' },
+  marketplaceMaxPrice: { key: 'marketplace_max_price', kind: 'number', fallback: 10 },
+  marketplaceBrowseUrl: { key: 'marketplace_browse_url', kind: 'string', fallback: '' },
+  marketplaceBrowseIntervalMs: { key: 'marketplace_browse_interval_ms', kind: 'number', fallback: 300_000 },
+  marketplaceSearchEnabled: { key: 'marketplace_search_enabled', kind: 'boolean', fallback: true },
+  marketplaceSearchIntervalMs: {
+    key: 'marketplace_search_interval_ms',
+    kind: 'number',
+    fallback: 3_600_000,
+  },
+  marketplaceFreePhrases: { key: 'marketplace_free_phrases', kind: 'list', fallback: DEFAULT_FREE_PHRASES },
+  marketplaceNotFreePhrases: {
+    key: 'marketplace_not_free_phrases',
+    kind: 'list',
+    fallback: DEFAULT_NOT_FREE_PHRASES,
+  },
 };
 
 const FIELDS = Object.keys(SCHEMA) as (keyof Settings)[];
 
 function decode(kind: SettingKind, raw: string): unknown {
   if (kind === 'boolean') return raw === '1' || raw === 'true';
+  if (kind === 'list') return parseJsonArray(raw);
   if (kind === 'number') {
     const parsed = Number(raw);
     return Number.isFinite(parsed) ? parsed : undefined;
@@ -104,6 +207,7 @@ function decode(kind: SettingKind, raw: string): unknown {
 
 function encode(value: unknown): string {
   if (typeof value === 'boolean') return value ? '1' : '0';
+  if (Array.isArray(value)) return JSON.stringify(value);
   return String(value);
 }
 

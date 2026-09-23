@@ -18,6 +18,7 @@ interface RuleRow {
   daily_cap: number;
   max_post_age_min: number;
   max_distance_km: number | null;
+  search_marketplace: number;
   priority: number;
   created_at: number;
   updated_at: number;
@@ -48,6 +49,7 @@ function toRule(row: RuleRow): Rule {
     dailyCap: row.daily_cap,
     maxPostAgeMin: row.max_post_age_min,
     maxDistanceKm: row.max_distance_km,
+    searchMarketplace: toBool(row.search_marketplace),
     priority: row.priority,
     groupIds: groupIdsFor(row.id),
     createdAt: row.created_at,
@@ -86,9 +88,9 @@ export function createRule(input: RuleInput): Rule {
       `INSERT INTO rules (
          name, enabled, match_mode, include_keywords, exclude_keywords, regex,
          action_comment, action_dm, action_notify, require_approval,
-         comment_template_id, dm_template_id, daily_cap, max_post_age_min, max_distance_km, priority,
-         created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         comment_template_id, dm_template_id, daily_cap, max_post_age_min, max_distance_km,
+         search_marketplace, priority, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.name,
       b(input.enabled),
       input.matchMode,
@@ -104,6 +106,7 @@ export function createRule(input: RuleInput): Rule {
       input.dailyCap,
       input.maxPostAgeMin,
       input.maxDistanceKm,
+      b(input.searchMarketplace),
       input.priority,
       now,
       now,
@@ -126,7 +129,7 @@ export function updateRule(id: number, patch: Partial<RuleInput>): Rule | null {
          name = ?, enabled = ?, match_mode = ?, include_keywords = ?, exclude_keywords = ?, regex = ?,
          action_comment = ?, action_dm = ?, action_notify = ?, require_approval = ?,
          comment_template_id = ?, dm_template_id = ?, daily_cap = ?, max_post_age_min = ?,
-         max_distance_km = ?, priority = ?, updated_at = ?
+         max_distance_km = ?, search_marketplace = ?, priority = ?, updated_at = ?
        WHERE id = ?`,
       next.name,
       b(next.enabled),
@@ -143,6 +146,7 @@ export function updateRule(id: number, patch: Partial<RuleInput>): Rule | null {
       next.dailyCap,
       next.maxPostAgeMin,
       next.maxDistanceKm,
+      b(next.searchMarketplace),
       next.priority,
       Date.now(),
       id,

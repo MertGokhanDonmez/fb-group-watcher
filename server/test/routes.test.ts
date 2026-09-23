@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { dropTempDb, useTempDb } from './helpers.ts';
 
 let app: FastifyInstance;
@@ -100,5 +100,47 @@ describe('grup dogrulama', () => {
   it('olmayan grubu silmeye calisinca 404 doner', async () => {
     const response = await app.inject({ method: 'DELETE', url: '/api/groups/99999' });
     expect(response.statusCode).toBe(404);
+  });
+});
+
+describe('Telegram chat ID bulma', () => {
+  it('bulunan chat ID ve govdedeki tokeni kaydeder', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({ ok: true, result: [{ update_id: 1, message: { chat: { id: 777, first_name: 'Mert' } } }] }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/settings/telegram-find-chat',
+        headers: { 'content-type': 'application/json' },
+        payload: JSON.stringify({ botToken: 'yeni-token' }),
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ chatId: '777', name: 'Mert' });
+
+      const settings = (await app.inject({ method: 'GET', url: '/api/settings' })).json() as {
+        telegramBotToken: string;
+        telegramChatId: string;
+      };
+      expect(settings.telegramBotToken).toBe('yeni-token');
+      expect(settings.telegramChatId).toBe('777');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('token hic yoksa 400 doner', async () => {
+    await app.inject({
+      method: 'PATCH',
+      url: '/api/settings',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ telegramBotToken: '' }),
+    });
+    const response = await app.inject({ method: 'POST', url: '/api/settings/telegram-find-chat' });
+    expect(response.statusCode).toBe(400);
   });
 });

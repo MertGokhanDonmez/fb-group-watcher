@@ -133,4 +133,21 @@ export const MIGRATIONS: string[] = [
   -- NULL = mesafe filtresi yok. Konumu bilinmeyen gonderiler elenmez.
   ALTER TABLE rules ADD COLUMN max_distance_km REAL;
   `,
+
+  // 3 - Marketplace ilanlari
+  `
+  -- 'group' veya 'marketplace'. Marketplace kayitlarinda fb_post_id 'mp:<ilan id>' bicimindedir.
+  ALTER TABLE posts ADD COLUMN kind          TEXT NOT NULL DEFAULT 'group';
+  ALTER TABLE posts ADD COLUMN title         TEXT;
+  ALTER TABLE posts ADD COLUMN price_text    TEXT;
+  ALTER TABLE posts ADD COLUMN price_amount  REAL;
+  -- Aciklamada bedava ifadesi dogrulandi mi. NULL = ilan henuz acilmadi.
+  ALTER TABLE posts ADD COLUMN free_verified INTEGER;
+  -- Bedava kararina yol acan ifade; yanlis pozitifleri teshis etmek icin.
+  ALTER TABLE posts ADD COLUMN free_phrase   TEXT;
+
+  ALTER TABLE rules ADD COLUMN search_marketplace INTEGER NOT NULL DEFAULT 1;
+
+  CREATE INDEX idx_posts_kind ON posts(kind, seen_at DESC);
+  `,
 ];

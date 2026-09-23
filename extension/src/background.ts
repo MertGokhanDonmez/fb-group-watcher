@@ -4,11 +4,19 @@ import {
   type AgentConfig,
   type AgentGroupConfig,
   type AgentToServerMessage,
+  type CaptureCommand,
+  type MarketplaceSource,
+  type MarketplaceVisit,
   type RawPost,
   type ServerToAgentMessage,
 } from '../../shared/protocol.ts';
 import type { BlockDetection } from './content/detect.ts';
-import type { CollectResponse } from './content/collector.ts';
+import type {
+  CaptureResponse,
+  CollectResponse,
+  MarketplaceCollectRequest,
+  MarketplaceCollectResponse,
+} from './content/collector.ts';
 
 /**
  * Arka plan servisi.
@@ -20,6 +28,8 @@ import type { CollectResponse } from './content/collector.ts';
  *   calisma sekmesi  - gruplari yavas bir turda gezer. Bildirimlerin kacirdigi
  *                      (Facebook bazen bildirimleri birlestirir) gonderiler icin
  *                      guvenlik agidir.
+ *   marketplace      - kendi dongusuyle genel sayfayi tarar, aday ilanlari acar.
+ *                      Grup turunu beklemez, grup turu da onu beklemez.
  */
 
 const SERVER_BASE = 'ws://127.0.0.1:8787/agent';
@@ -42,6 +52,7 @@ let reconnectDelay = RECONNECT_MIN_MS;
 let nextConnectAllowedAt = 0;
 let connecting = false;
 let cycleRunning = false;
+let marketplaceRunning = false;
 /** Yeni config gelince suren donguyu iptal etmek icin surum sayaci. */
 let configEpoch = 0;
 
@@ -169,7 +180,9 @@ async function handleServerMessage(message: ServerToAgentMessage): Promise<void>
       config = message.config;
       configEpoch += 1;
       await applyNotificationTab(message.config);
+      await applyMarketplaceTab(message.config);
       void startCycle(configEpoch);
+      void startMarketplaceCycle(configEpoch);
       return;
 
     case 'do_action':
@@ -182,6 +195,15 @@ async function handleServerMessage(message: ServerToAgentMessage): Promise<void>
         verified: false,
         error: 'Aksiyon uygulama henuz etkin degil (Faz 3)',
       });
+      return;
+
+    case 'visit_listings':
+      // Duraklamadaysa ekleme: sessiz saatlerde sayfa acmak duraklatmanin amacini bosa cikarir.
+      if (config && !config.paused) enqueueListingVisits(message.listings);
+      return;
+
+    case 'capture':
+      await capturePage(message.command);
       return;
 
     case 'ping':
@@ -244,10 +266,42 @@ async function refreshNotificationTabIfStale(): Promise<void> {
   await chrome.storage.session.set({ notificationOpenedAt: Date.now() });
 }
 
-async function getWorkerTabId(): Promise<number> {
-  const existing = await getStoredTab('workerTabId');
-  if (existing !== null) return existing;
-  return openTab('workerTabId', 'https://www.facebook.com/');
+/** Sayfa gezen sekmeler. Her biri kendi dongusune ait; biri digerinin sayfasini degistirmez. */
+interface WorkTab {
+  key: string;
+  /** Sekme ilk acilirken yuklenen adres. */
+  home: string;
+}
+
+const WORKER_TAB: WorkTab = { key: 'workerTabId', home: 'https://www.facebook.com/' };
+const MARKETPLACE_TAB: WorkTab = {
+  key: 'marketplaceTabId',
+  home: 'https://www.facebook.com/marketplace/',
+};
+
+/** Marketplace kapatilinca sekmesi de kapanir; acilinca ilk ziyarette yeniden acilir. */
+async function applyMarketplaceTab(current: AgentConfig): Promise<void> {
+  if (current.marketplace.enabled) return;
+  const existing = await getStoredTab(MARKETPLACE_TAB.key);
+  if (existing === null) return;
+  await chrome.tabs.remove(existing).catch(() => undefined);
+  await chrome.storage.session.remove(MARKETPLACE_TAB.key);
+}
+
+/**
+ * Iki sekme ayni anda yukleme baslatmasin. Toplam yuk degismez ama ayni hesaptan
+ * ayni saniyede iki sayfa yuklemesi tek bir kullanicidan beklenmeyen bir desen.
+ */
+const LOAD_SPACING_MS = 4_000;
+let lastLoadStartedAt = 0;
+
+async function spaceLoads(): Promise<void> {
+  for (;;) {
+    const wait = lastLoadStartedAt + LOAD_SPACING_MS - Date.now();
+    if (wait <= 0) break;
+    await sleep(wait + Math.round(Math.random() * 1_500));
+  }
+  lastLoadStartedAt = Date.now();
 }
 
 function waitForTabLoad(tabId: number, timeoutMs: number): Promise<boolean> {
@@ -265,6 +319,21 @@ function waitForTabLoad(tabId: number, timeoutMs: number): Promise<boolean> {
     };
     chrome.tabs.onUpdated.addListener(listener);
   });
+}
+
+/**
+ * Sekmeyi verilen adrese goturur ve yuklenmesini bekler.
+ * Ayni adrese tabs.update cagrisi yeniden yukleme tetiklemez; o durumda reload gerekiyor.
+ */
+async function navigateTab(tab: WorkTab, url: string): Promise<number> {
+  const tabId = (await getStoredTab(tab.key)) ?? (await openTab(tab.key, tab.home));
+  await spaceLoads();
+  const current = await chrome.tabs.get(tabId);
+  const loaded = waitForTabLoad(tabId, TAB_LOAD_TIMEOUT_MS);
+  if (current.url === url) await chrome.tabs.reload(tabId);
+  else await chrome.tabs.update(tabId, { url, active: false });
+  await loaded;
+  return tabId;
 }
 
 async function requestCollect(
@@ -351,14 +420,7 @@ function rememberVisited(permalink: string): void {
 
 async function visitPost(target: { permalink: string; fbGroupId: string }): Promise<void> {
   rememberVisited(target.permalink);
-  const tabId = await getWorkerTabId();
-
-  const current = await chrome.tabs.get(tabId);
-  const loaded = waitForTabLoad(tabId, TAB_LOAD_TIMEOUT_MS);
-  if (current.url === target.permalink) await chrome.tabs.reload(tabId);
-  else await chrome.tabs.update(tabId, { url: target.permalink, active: false });
-  await loaded;
-
+  const tabId = await navigateTab(WORKER_TAB, target.permalink);
   const response = await requestCollect(tabId, target.fbGroupId, POST_VISIT_DWELL_MS, 'post');
   deliverCollectResponse(response, target.fbGroupId, target.permalink);
 }
@@ -391,20 +453,26 @@ export function buildRotation(groups: AgentGroupConfig[]): AgentGroupConfig[] {
  * baslanir ve sondaki gruplara neredeyse hic sira gelmezdi (gercekte yasandi).
  * storage.session SW yeniden baslatmalarini da atlatir.
  */
-let sweepIndex: number | null = null;
-
-async function getSweepIndex(): Promise<number> {
-  if (sweepIndex !== null) return sweepIndex;
-  const stored = await chrome.storage.session.get('sweepIndex');
-  sweepIndex = typeof stored.sweepIndex === 'number' ? (stored.sweepIndex as number) : 0;
-  return sweepIndex;
+function persistentCounter(key: string): { get: () => Promise<number>; advance: () => Promise<void> } {
+  let value: number | null = null;
+  const get = async (): Promise<number> => {
+    if (value !== null) return value;
+    const stored = await chrome.storage.session.get(key);
+    value = typeof stored[key] === 'number' ? (stored[key] as number) : 0;
+    return value;
+  };
+  return {
+    get,
+    advance: async () => {
+      // Sinirsiz buyumesin; rotasyon uzunlugu degisse de modulo guvenli kalir.
+      value = ((await get()) + 1) % 1_000_000;
+      await chrome.storage.session.set({ [key]: value });
+    },
+  };
 }
 
-async function advanceSweepIndex(): Promise<void> {
-  // Sinirsiz buyumesin; rotasyon uzunlugu degisse de modulo guvenli kalir.
-  sweepIndex = ((await getSweepIndex()) + 1) % 1_000_000;
-  await chrome.storage.session.set({ sweepIndex });
-}
+const sweepCounter = persistentCounter('sweepIndex');
+const marketplaceCounter = persistentCounter('marketplaceIndex');
 
 async function startCycle(epoch: number): Promise<void> {
   if (cycleRunning) return;
@@ -415,6 +483,9 @@ async function startCycle(epoch: number): Promise<void> {
     log('error', `Dongu hatasi: ${String(error)}`);
   } finally {
     cycleRunning = false;
+    // Yeni plan geldiginde eski dongu kapanir; yenisi alarmi (1 dk) beklemeden baslar.
+    // Kural her degistiginde plan gonderildigi icin bu bekleme artik sik yasaniyor.
+    if (config && epoch !== configEpoch) void startCycle(configEpoch);
   }
 }
 
@@ -437,55 +508,278 @@ async function runCycle(epoch: number): Promise<void> {
       await interruptibleSleep(
         jitter(Math.max(config.cycleGapMs, POST_VISIT_MIN_GAP_MS), config.jitterRatio),
         epoch,
+        hasPostVisit,
       );
       continue;
     }
 
     const rotation = buildRotation(config.groups);
     if (rotation.length === 0) {
-      await interruptibleSleep(30_000, epoch);
+      await interruptibleSleep(30_000, epoch, hasPostVisit);
       continue;
     }
 
-    const group = rotation[(await getSweepIndex()) % rotation.length];
-    await advanceSweepIndex();
+    const group = rotation[(await sweepCounter.get()) % rotation.length];
+    await sweepCounter.advance();
     if (group) await visitGroup(group);
 
     await refreshNotificationTabIfStale();
 
     const perVisitMs = Math.max(config.cycleGapMs, Math.round(config.groupSweepMs / rotation.length));
-    await interruptibleSleep(jitter(perVisitMs, config.jitterRatio), epoch);
+    await interruptibleSleep(jitter(perVisitMs, config.jitterRatio), epoch, hasPostVisit);
   }
 }
 
+const hasPostVisit = (): boolean => pendingPostVisits.length > 0;
+
 /**
- * Tur arasi bekleme, yeni bir bildirim ziyareti dustugunde erken sonlanir -
- * yoksa "hemen git" vaadi 3-4 dakikalik tarama uykusuna takilirdi.
- * Epoch degisiminde de erken cikar ki eski dongu gecikmeden kapansin.
+ * Tur arasi bekleme, dongunun yapacak isi cikinca (yeni bildirim ziyareti, sirasi
+ * gelen Marketplace taramasi) erken sonlanir - yoksa "hemen git" vaadi 3-4
+ * dakikalik tarama uykusuna takilirdi. Epoch degisiminde de erken cikar ki eski
+ * dongu gecikmeden kapansin. Erken cikis icin yine de en az cycleGapMs beklenir:
+ * ayni sekmede iki sayfa yuklemesi arka arkaya gelmemeli.
  */
-async function interruptibleSleep(ms: number, epoch: number): Promise<void> {
+async function interruptibleSleep(ms: number, epoch: number, hasWork: () => boolean): Promise<void> {
   const SLICE_MS = 2_000;
-  const deadline = Date.now() + ms;
+  const start = Date.now();
+  const deadline = start + ms;
+  const earliestWake = start + Math.min(ms, config?.cycleGapMs ?? 0);
   while (Date.now() < deadline) {
     if (epoch !== configEpoch) return;
-    if (pendingPostVisits.length > 0) return;
+    if (Date.now() >= earliestWake && hasWork()) return;
     await sleep(Math.min(SLICE_MS, deadline - Date.now()));
   }
 }
 
 async function visitGroup(group: AgentGroupConfig): Promise<void> {
-  const tabId = await getWorkerTabId();
-
-  const current = await chrome.tabs.get(tabId);
-  const alreadyThere = current.url === group.url;
-  const loaded = waitForTabLoad(tabId, TAB_LOAD_TIMEOUT_MS);
-  // Ayni adrese tabs.update cagrisi yeniden yukleme tetiklemez; o durumda reload gerekiyor.
-  if (alreadyThere) await chrome.tabs.reload(tabId);
-  else await chrome.tabs.update(tabId, { url: group.url, active: false });
-  await loaded;
-
+  const tabId = await navigateTab(WORKER_TAB, group.url);
   const response = await requestCollect(tabId, group.fbGroupId, group.dwellMs, 'feed');
   deliverCollectResponse(response, group.fbGroupId, group.url);
+}
+
+/* ---------- Marketplace ---------- */
+
+/**
+ * Marketplace'in bildirim mekanizmasi yok; tek yol periyodik taramadir. Kendi
+ * sekmesinde, grup turundan bagimsiz bir dongu yurur:
+ *   1. aday ilan ziyaretleri (bedava esya dakikalar icinde gidebilir),
+ *   2. genel sayfa - tek sayfa, en yeni once; kartlari sunucu basliga gore suzer,
+ *   3. yedek anahtar kelime aramalari - seyrek; yalnizca aciklamada gecen kelimeler icin.
+ * Adaylari sunucu secer ve 'visit_listings' ile geri yollar; bedava karari ilan
+ * sayfasindaki aciklamaya bakilarak sunucuda verilir.
+ */
+const MARKETPLACE_PAGE_DWELL_MS = 10_000;
+const LISTING_VISIT_DWELL_MS = 12_000;
+const PENDING_LISTING_CAP = 20;
+const VISITED_LISTING_CAP = 500;
+
+const pendingListingVisits: MarketplaceVisit[] = [];
+const visitedListings = new Set<string>();
+/** Siradaki taramalarin zamani. Service worker yeniden baslayinca 0 olur: ilk turda hemen yapilir. */
+let browseDueAt = 0;
+let searchDueAt = 0;
+
+/** Marketplace dongusunun su an yapacak isi var mi. */
+function marketplaceWorkReady(): boolean {
+  const marketplace = config?.marketplace;
+  if (!config || config.paused || !marketplace?.enabled) return false;
+  if (pendingListingVisits.length > 0) return true;
+  const now = Date.now();
+  return (
+    (marketplace.browse !== null && now >= browseDueAt) ||
+    (marketplace.searches.length > 0 && now >= searchDueAt)
+  );
+}
+
+function enqueueListingVisits(listings: MarketplaceVisit[]): void {
+  for (const listing of listings) {
+    if (visitedListings.has(listing.listingId)) continue;
+    if (pendingListingVisits.length >= PENDING_LISTING_CAP) return;
+    if (pendingListingVisits.some((item) => item.listingId === listing.listingId)) continue;
+    pendingListingVisits.push(listing);
+  }
+}
+
+function rememberListing(listingId: string): void {
+  visitedListings.add(listingId);
+  if (visitedListings.size > VISITED_LISTING_CAP) {
+    const oldest = visitedListings.values().next().value;
+    if (oldest !== undefined) visitedListings.delete(oldest);
+  }
+}
+
+async function requestMarketplaceCollect(
+  tabId: number,
+  request: Omit<MarketplaceCollectRequest, 'type'>,
+): Promise<MarketplaceCollectResponse | null> {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      return (await chrome.tabs.sendMessage(tabId, {
+        type: 'collect_marketplace',
+        ...request,
+      } satisfies MarketplaceCollectRequest)) as MarketplaceCollectResponse;
+    } catch {
+      await sleep(750);
+    }
+  }
+  return null;
+}
+
+/** Engel veya hata varsa bildirir; yanit kullanilabilir durumdaysa true doner. */
+function checkMarketplaceResponse(
+  response: MarketplaceCollectResponse | null,
+  label: string,
+  url: string,
+): response is MarketplaceCollectResponse {
+  if (!response) {
+    log('warn', `${label}: sayfa yanit vermedi (content script ulasilamadi)`);
+    return false;
+  }
+  if (response.blocked) {
+    send({ type: 'blocked', kind: response.blocked.kind, url, note: response.blocked.note });
+    return false;
+  }
+  if (!response.ok) {
+    log('warn', `${label}: toplama hatasi - ${response.error ?? 'bilinmiyor'}`);
+    return false;
+  }
+  return true;
+}
+
+/** Genel sayfayi veya bir arama sayfasini acar, kartlari sunucuya iletir. */
+async function scanMarketplacePage(
+  source: MarketplaceSource,
+  query: string | null,
+  url: string,
+): Promise<void> {
+  const tabId = await navigateTab(MARKETPLACE_TAB, url);
+  const response = await requestMarketplaceCollect(tabId, {
+    mode: 'list',
+    timeoutMs: MARKETPLACE_PAGE_DWELL_MS,
+  });
+  const label = source === 'browse' ? 'marketplace genel sayfa' : `marketplace "${query ?? '-'}"`;
+  if (!checkMarketplaceResponse(response, label, url)) return;
+  send({
+    type: 'marketplace_results',
+    source,
+    query,
+    cards: response.cards ?? [],
+    stats: response.stats ?? { articlesSeen: 0, postsParsed: 0, failures: 0 },
+  });
+}
+
+async function visitListing(target: MarketplaceVisit): Promise<void> {
+  rememberListing(target.listingId);
+  const tabId = await navigateTab(MARKETPLACE_TAB, target.url);
+  const response = await requestMarketplaceCollect(tabId, {
+    mode: 'item',
+    listingId: target.listingId,
+    timeoutMs: LISTING_VISIT_DWELL_MS,
+  });
+  const label = `ilan ${target.listingId}`;
+  if (!checkMarketplaceResponse(response, label, target.url)) return;
+  if (!response.listing) {
+    log('warn', `${label}: ilan sayfasi ayristirilamadi`);
+    return;
+  }
+  send({ type: 'marketplace_listing', listing: response.listing });
+}
+
+async function startMarketplaceCycle(epoch: number): Promise<void> {
+  if (marketplaceRunning) return;
+  marketplaceRunning = true;
+  try {
+    await runMarketplaceCycle(epoch);
+  } catch (error) {
+    log('error', `Marketplace dongu hatasi: ${String(error)}`);
+  } finally {
+    marketplaceRunning = false;
+    if (config && epoch !== configEpoch) void startMarketplaceCycle(configEpoch);
+  }
+}
+
+async function runMarketplaceCycle(epoch: number): Promise<void> {
+  while (epoch === configEpoch && config) {
+    const marketplace = config.marketplace;
+    if (config.paused || !marketplace.enabled) {
+      await interruptibleSleep(30_000, epoch, marketplaceWorkReady);
+      continue;
+    }
+    const gapMs = jitter(Math.max(config.cycleGapMs, POST_VISIT_MIN_GAP_MS), config.jitterRatio);
+
+    const listing = pendingListingVisits.shift();
+    if (listing) {
+      await visitListing(listing);
+      await interruptibleSleep(gapMs, epoch, marketplaceWorkReady);
+      continue;
+    }
+
+    // Siradaki zaman ziyaretten once belirlenir: sayfa hata verse de tur kaymaz.
+    if (marketplace.browse && Date.now() >= browseDueAt) {
+      browseDueAt = Date.now() + jitter(marketplace.browse.intervalMs, config.jitterRatio);
+      await scanMarketplacePage('browse', null, marketplace.browse.url);
+      await interruptibleSleep(gapMs, epoch, marketplaceWorkReady);
+      continue;
+    }
+
+    const { searches, searchIntervalMs } = marketplace;
+    if (searches.length > 0 && Date.now() >= searchDueAt) {
+      const search = searches[(await marketplaceCounter.get()) % searches.length];
+      await marketplaceCounter.advance();
+      const perSearchMs = Math.max(config.cycleGapMs, Math.round(searchIntervalMs / searches.length));
+      searchDueAt = Date.now() + jitter(perSearchMs, config.jitterRatio);
+      if (search) await scanMarketplacePage('search', search.query, search.url);
+      await interruptibleSleep(gapMs, epoch, marketplaceWorkReady);
+      continue;
+    }
+
+    await interruptibleSleep(60_000, epoch, marketplaceWorkReady);
+  }
+}
+
+/* ---------- Snapshot ---------- */
+
+/**
+ * Verilen adresi gecici bir sekmede acar ve ham HTML'ini sunucuya getirir.
+ * Gecici sekme kullaniliyor ki suren tarama turleri bolunmesin.
+ * Snapshot sunucuda yerel diske yazilir; disari hicbir sey gitmez.
+ */
+async function capturePage(command: CaptureCommand): Promise<void> {
+  let tabId: number | undefined;
+  try {
+    const tab = await chrome.tabs.create({ url: command.url, active: false, pinned: true });
+    tabId = tab.id;
+    if (tabId === undefined) throw new Error('sekme acilamadi');
+    await waitForTabLoad(tabId, TAB_LOAD_TIMEOUT_MS);
+    await sleep(command.dwellMs);
+
+    let response: CaptureResponse | null = null;
+    for (let attempt = 0; attempt < 4 && response === null; attempt += 1) {
+      try {
+        response = (await chrome.tabs.sendMessage(tabId, {
+          type: 'capture_page',
+        })) as CaptureResponse;
+      } catch {
+        await sleep(750);
+      }
+    }
+    if (!response) throw new Error('sayfaya ulasilamadi (content script yok)');
+    send({
+      type: 'capture_result',
+      captureId: command.captureId,
+      url: response.url,
+      html: response.html,
+    });
+  } catch (error) {
+    send({
+      type: 'capture_result',
+      captureId: command.captureId,
+      url: command.url,
+      error: String(error),
+    });
+  } finally {
+    if (tabId !== undefined) await chrome.tabs.remove(tabId).catch(() => undefined);
+  }
 }
 
 /* ---------- Icerik betiginden gelen mesajlar ---------- */
@@ -547,8 +841,12 @@ setInterval(() => send({ type: 'heartbeat', ts: Date.now() }), HEARTBEAT_MS);
 // Service worker yine de sonlandirilirsa alarm onu uyandirip donguyu yeniden baslatir.
 chrome.alarms.create('fbw-keepalive', { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener(() => {
-  if (!socket || socket.readyState === WebSocket.CLOSED) void connect();
-  else if (config && !cycleRunning) void startCycle(configEpoch);
+  if (!socket || socket.readyState === WebSocket.CLOSED) {
+    void connect();
+    return;
+  }
+  if (config && !cycleRunning) void startCycle(configEpoch);
+  if (config && !marketplaceRunning) void startMarketplaceCycle(configEpoch);
 });
 
 chrome.runtime.onStartup.addListener(() => void connect());

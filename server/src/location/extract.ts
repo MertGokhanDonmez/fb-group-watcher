@@ -47,15 +47,25 @@ function buildIndex(areas: PragueArea[]): { specific: AliasEntry[]; generic: Ali
 
 const INDEX = buildIndex(PRAGUE_AREAS);
 
+export interface ExtractOptions {
+  /**
+   * Sehir geneli girdiye dusulsun mu (varsayilan evet). Marketplace ilaninda konum
+   * alani neredeyse her zaman yalnizca "Praha" der; bunu sehir merkezi saymak her
+   * ilana ayni sahte mesafeyi yazar ve mesafe filtresini anlamsizlastirir.
+   */
+  allowGeneric?: boolean;
+}
+
 /**
  * Gonderi metninden bolge cikarir.
  * Once ozel bolgeler denenir, hicbiri bulunamazsa sehir geneli girdi kullanilir.
  * Hicbir sey bulunamazsa null doner - konum bilinmiyor demektir, elenmez.
  */
-export function extractLocation(text: string): ExtractedLocation | null {
+export function extractLocation(text: string, options: ExtractOptions = {}): ExtractedLocation | null {
   const haystack = normalizeText(text);
+  const lists = options.allowGeneric === false ? [INDEX.specific] : [INDEX.specific, INDEX.generic];
 
-  for (const list of [INDEX.specific, INDEX.generic]) {
+  for (const list of lists) {
     for (const entry of list) {
       if (!entry.pattern.test(haystack)) continue;
       return {
