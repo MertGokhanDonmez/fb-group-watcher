@@ -53,6 +53,15 @@ const BASE: Settings = {
   jitterRatio: 0.35,
   selectorHealthThreshold: 3,
   heartbeatTimeoutSec: 300,
+  marketplaceEnabled: true,
+  marketplaceLocation: 'prague',
+  marketplaceMaxPrice: 10,
+  marketplaceBrowseUrl: '',
+  marketplaceBrowseIntervalMs: 300_000,
+  marketplaceSearchEnabled: true,
+  marketplaceSearchIntervalMs: 3_600_000,
+  marketplaceFreePhrases: [],
+  marketplaceNotFreePhrases: [],
 };
 
 describe('computePause', () => {

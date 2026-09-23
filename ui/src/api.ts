@@ -31,6 +31,15 @@ export interface Settings {
   jitterRatio: number;
   selectorHealthThreshold: number;
   heartbeatTimeoutSec: number;
+  marketplaceEnabled: boolean;
+  marketplaceLocation: string;
+  marketplaceMaxPrice: number;
+  marketplaceBrowseUrl: string;
+  marketplaceBrowseIntervalMs: number;
+  marketplaceSearchEnabled: boolean;
+  marketplaceSearchIntervalMs: number;
+  marketplaceFreePhrases: string[];
+  marketplaceNotFreePhrases: string[];
 }
 
 export interface AgentStatus {
@@ -113,6 +122,11 @@ export const api = {
   regenerateToken: () =>
     request<{ token: string }>('/settings/agent-token/regenerate', { method: 'POST' }),
   telegramTest: () => request<{ ok: boolean }>('/settings/telegram-test', { method: 'POST' }),
+  telegramFindChat: (botToken?: string) =>
+    request<{ chatId: string; name: string }>('/settings/telegram-find-chat', {
+      method: 'POST',
+      body: body(botToken ? { botToken } : {}),
+    }),
 
   listGroups: () => request<Group[]>('/groups'),
   createGroup: (input: { url: string; name?: string }) =>

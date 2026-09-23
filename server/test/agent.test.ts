@@ -131,3 +131,98 @@ describe('ajan el sikismasi', () => {
     await closed(again.socket);
   });
 });
+
+/** Soketten belirtilen turdeki ilk mesaji bekler. */
+function nextMessage<T extends ServerToAgentMessage['type']>(
+  socket: WebSocket,
+  type: T,
+): Promise<Extract<ServerToAgentMessage, { type: T }>> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${type} gelmedi`)), 5000);
+    const listener = (data: Buffer): void => {
+      const message = JSON.parse(data.toString()) as ServerToAgentMessage;
+      if (message.type !== type) return;
+      clearTimeout(timer);
+      socket.off('message', listener);
+      resolve(message as Extract<ServerToAgentMessage, { type: T }>);
+    };
+    socket.on('message', listener);
+  });
+}
+
+describe('Marketplace protokolu', () => {
+  it('arama sonucuna ilan ziyareti ister, aciklamasi bedava olan ilani eslestirir', async () => {
+    const { createRule } = await import('../src/repo/rules.ts');
+    const { listMatchDetails } = await import('../src/repo/matches.ts');
+    createRule({
+      name: 'Gauc',
+      enabled: true,
+      matchMode: 'any',
+      includeKeywords: ['gauč'],
+      excludeKeywords: [],
+      regex: null,
+      actionComment: false,
+      actionDm: false,
+      actionNotify: false,
+      requireApproval: true,
+      commentTemplateId: null,
+      dmTemplateId: null,
+      dailyCap: 20,
+      maxPostAgeMin: 60,
+      maxDistanceKm: null,
+      searchMarketplace: true,
+      priority: 1,
+      groupIds: [],
+    });
+
+    const { socket } = await handshake({ instanceId: 'ornek-mp' });
+    const url = 'https://www.facebook.com/marketplace/item/424242/';
+    const visit = nextMessage(socket, 'visit_listings');
+    socket.send(
+      JSON.stringify({
+        type: 'marketplace_results',
+        source: 'browse',
+        query: null,
+        cards: [
+          {
+            listingId: '424242',
+            url,
+            title: 'Gauč',
+            priceText: 'Zdarma',
+            priceAmount: 0,
+            locationText: 'Praha',
+            imageUrl: null,
+          },
+        ],
+        stats: { articlesSeen: 1, postsParsed: 1, failures: 0 },
+      }),
+    );
+    expect((await visit).listings).toEqual([{ listingId: '424242', url }]);
+
+    socket.send(
+      JSON.stringify({
+        type: 'marketplace_listing',
+        listing: {
+          listingId: '424242',
+          url,
+          title: 'Gauč',
+          description: 'Daruji gauč, odvoz nutný.',
+          priceText: 'Zdarma',
+          priceAmount: 0,
+          locationText: 'Praha',
+          sellerName: null,
+          sellerProfileUrl: null,
+          imageUrls: [],
+          postedAt: Date.now(),
+          postedAtLabel: null,
+        },
+      }),
+    );
+
+    await expect
+      .poll(() => listMatchDetails(10).some((match) => match.post.fbPostId === 'mp:424242'))
+      .toBe(true);
+    socket.close();
+    await closed(socket);
+  });
+});

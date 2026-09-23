@@ -4,7 +4,10 @@
  */
 
 // 3: hello mesajina instanceId eklendi (yinelenen eklenti kopyalarini ayirt etmek icin).
-export const PROTOCOL_VERSION = 3;
+// 4: Marketplace aramasi ve ilan ziyareti mesajlari eklendi.
+// 5: Marketplace genel sayfa taramasi; sonuc mesajina kaynak alani eklendi.
+// 6: Sayfa snapshot'i alma (selector onarimi icin) eklendi.
+export const PROTOCOL_VERSION = 6;
 
 /** Bir gonderinin nereden yakalandigi. */
 export type PostSource = 'feed' | 'notification';
@@ -82,6 +85,70 @@ export interface NotificationWatchConfig {
   refreshMs: number;
 }
 
+/** Marketplace'te tek bir anahtar kelime aramasi. */
+export interface MarketplaceSearch {
+  query: string;
+  /** Siralama, fiyat ve yaricap parametreleri islenmis arama sayfasi adresi. */
+  url: string;
+}
+
+/**
+ * Marketplace izleme. Bildirim mekanizmasi olmadigi icin tek yol periyodik taramadir
+ * ve kendi sekmesinde, grup turundan bagimsiz yurur.
+ *
+ * Ana yol genel sayfa: tek sayfa, anahtar kelimesiz, en yeni once ve fiyat sinirli.
+ * Kartlar sunucuda basliga gore suzulur. Anahtar kelime aramalari yalnizca yedektir:
+ * kelime yalnizca aciklamada gecen ilanlari Facebook'un aramasi bulabilir.
+ */
+export interface MarketplaceWatchConfig {
+  enabled: boolean;
+  /** Genel sayfa. Taranacak kural yoksa null. */
+  browse: { url: string; intervalMs: number } | null;
+  /** Yedek anahtar kelime aramalari; her biri searchIntervalMs icinde bir kez yapilir. */
+  searches: MarketplaceSearch[];
+  searchIntervalMs: number;
+}
+
+/** Kartlarin geldigi sayfa: genel sayfa mi, anahtar kelime aramasi mi. */
+export type MarketplaceSource = 'browse' | 'search';
+
+/** Arama sonuc kartindan okunan ilan. Kartta aciklama YOK; bedava karari icin ilan acilmali. */
+export interface MarketplaceCard {
+  listingId: string;
+  url: string;
+  title: string | null;
+  /** Kartta gorunen ham fiyat ("Zdarma", "1 200 Kč"). */
+  priceText: string | null;
+  /** Fiyat metninden cikarilan tutar; cozulemezse null. */
+  priceAmount: number | null;
+  locationText: string | null;
+  imageUrl: string | null;
+}
+
+/** Ilan sayfasindan okunan tam kayit. */
+export interface MarketplaceListing {
+  listingId: string;
+  url: string;
+  title: string | null;
+  /** Bedava karari yalnizca buna dayanir; fiyat alani kanit sayilmaz. */
+  description: string;
+  priceText: string | null;
+  priceAmount: number | null;
+  locationText: string | null;
+  sellerName: string | null;
+  sellerProfileUrl: string | null;
+  imageUrls: string[];
+  /** Ilanin yayinlanma zamani, epoch ms. Cikarilamazsa null. */
+  postedAt: number | null;
+  postedAtLabel: string | null;
+}
+
+/** Sunucunun eklentiden acmasini istedigi ilan. */
+export interface MarketplaceVisit {
+  listingId: string;
+  url: string;
+}
+
 export interface AgentConfig {
   groups: AgentGroupConfig[];
   /** Iki grup ziyareti arasi taban bekleme (ms). */
@@ -101,6 +168,7 @@ export interface AgentConfig {
   notifications: NotificationWatchConfig;
   /** Tam bir grup taramasi turu bittikten sonra beklenecek sure (guvenlik agi). */
   groupSweepMs: number;
+  marketplace: MarketplaceWatchConfig;
 }
 
 export type AgentActionKind = 'comment' | 'dm';
@@ -114,6 +182,18 @@ export interface AgentActionCommand {
   authorProfileUrl: string | null;
   /** Sablondan render edilmis, gonderilecek nihai metin. */
   text: string;
+}
+
+/**
+ * Sayfa snapshot'i istegi. Facebook'un DOM'u degistiginde ayristiriciyi onarmanin
+ * tek yolu gercek sayfanin HTML'ine bakmaktir; bu komut onu gecici bir sekmede
+ * alip getirir. Snapshot yalnizca yerel diske yazilir.
+ */
+export interface CaptureCommand {
+  captureId: number;
+  url: string;
+  /** Sayfa yuklendikten sonra icerigin render olmasi icin beklenecek sure (ms). */
+  dwellMs: number;
 }
 
 /* ---------- Eklenti -> Server ---------- */
@@ -134,6 +214,16 @@ export type AgentToServerMessage =
   | { type: 'heartbeat'; ts: number }
   | { type: 'posts'; fbGroupId: string; posts: RawPost[]; stats: ParseStats }
   | {
+      type: 'marketplace_results';
+      source: MarketplaceSource;
+      /** Anahtar kelime aramasinda aranan kelime; genel sayfada null. */
+      query: string | null;
+      cards: MarketplaceCard[];
+      stats: ParseStats;
+    }
+  | { type: 'marketplace_listing'; listing: MarketplaceListing }
+  | { type: 'capture_result'; captureId: number; url: string; html?: string; error?: string }
+  | {
       type: 'action_result';
       actionId: number;
       ok: boolean;
@@ -151,6 +241,9 @@ export type ServerToAgentMessage =
   | { type: 'hello_error'; reason: string }
   | { type: 'config'; config: AgentConfig }
   | { type: 'do_action'; command: AgentActionCommand }
+  /** Arama sonucundaki yeni adaylar: bedava karari icin ilan sayfalari acilmali. */
+  | { type: 'visit_listings'; listings: MarketplaceVisit[] }
+  | { type: 'capture'; command: CaptureCommand }
   | { type: 'ping' };
 
 /* ---------- Yardimcilar ---------- */

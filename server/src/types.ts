@@ -42,6 +42,8 @@ export interface Rule {
   maxPostAgeMin: number;
   /** Ev konumuna bu mesafeden uzak ilanlar elenir (km). null = filtre yok. */
   maxDistanceKm: number | null;
+  /** Anahtar kelimeler Marketplace'te de aransin mi. Grup secimi Marketplace'e uygulanmaz. */
+  searchMarketplace: boolean;
   priority: number;
   /** Bos dizi = tum aktif gruplara uygulanir. */
   groupIds: number[];
@@ -49,8 +51,11 @@ export interface Rule {
   updatedAt: number;
 }
 
+export type PostKind = 'group' | 'marketplace';
+
 export interface Post {
   id: number;
+  kind: PostKind;
   fbPostId: string;
   groupId: number | null;
   permalink: string;
@@ -68,6 +73,13 @@ export interface Post {
   locationLon: number | null;
   /** Ev konumuna uzaklik (km). Konum veya ev konumu bilinmiyorsa null. */
   distanceKm: number | null;
+  /** Yalnizca Marketplace: ilan basligi. */
+  title: string | null;
+  priceText: string | null;
+  priceAmount: number | null;
+  /** Yalnizca Marketplace: aciklamada bedava dogrulandi mi. null = ilan henuz acilmadi. */
+  freeVerified: boolean | null;
+  freePhrase: string | null;
 }
 
 export type MatchStatus = 'pending' | 'approved' | 'sent' | 'failed' | 'skipped' | 'ignored';

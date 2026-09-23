@@ -185,6 +185,14 @@ export function Rules(): JSX.Element {
               />
               Once onay iste
             </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={rule.searchMarketplace}
+                onChange={(event) => void patch(rule, { searchMarketplace: event.target.checked })}
+              />
+              Marketplace'te de ara
+            </label>
           </div>
 
           <div className="row">
@@ -282,6 +290,10 @@ export function Rules(): JSX.Element {
                 {group.name}
               </label>
             ))}
+          </div>
+          <div className="hint">
+            Grup secimi Marketplace'e uygulanmaz; Marketplace'te yalnizca aciklamasinda bedava
+            yazan ilanlar eslesir ve max mesafe arama yaricapi olarak da kullanilir.
           </div>
           <div className="hint">
             Hicbiri secilmezse kural tum aktif gruplara uygulanir. Mesafe filtresi icin

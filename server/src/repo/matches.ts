@@ -1,5 +1,5 @@
-import { execute, parseJsonArray, queryAll, queryOne } from '../db/index.ts';
-import type { Match, MatchDetail, MatchStatus, Post } from '../types.ts';
+import { execute, parseJsonArray, queryAll, queryOne, toBool } from '../db/index.ts';
+import type { Match, MatchDetail, MatchStatus, Post, PostKind } from '../types.ts';
 import { listActionsForMatches } from './actions.ts';
 
 interface MatchRow {
@@ -92,6 +92,7 @@ interface DetailRow extends MatchRow {
   rule_name: string;
   group_name: string | null;
   p_id: number;
+  p_kind: PostKind;
   p_fb_post_id: string;
   p_group_id: number | null;
   p_permalink: string;
@@ -107,6 +108,11 @@ interface DetailRow extends MatchRow {
   p_location_lat: number | null;
   p_location_lon: number | null;
   p_distance_km: number | null;
+  p_title: string | null;
+  p_price_text: string | null;
+  p_price_amount: number | null;
+  p_free_verified: number | null;
+  p_free_phrase: string | null;
 }
 
 const DETAIL_SELECT = `
@@ -114,6 +120,7 @@ const DETAIL_SELECT = `
          r.name AS rule_name,
          g.name AS group_name,
          p.id                 AS p_id,
+         p.kind               AS p_kind,
          p.fb_post_id         AS p_fb_post_id,
          p.group_id           AS p_group_id,
          p.permalink          AS p_permalink,
@@ -128,7 +135,12 @@ const DETAIL_SELECT = `
          p.location_name      AS p_location_name,
          p.location_lat       AS p_location_lat,
          p.location_lon       AS p_location_lon,
-         p.distance_km        AS p_distance_km
+         p.distance_km        AS p_distance_km,
+         p.title              AS p_title,
+         p.price_text         AS p_price_text,
+         p.price_amount       AS p_price_amount,
+         p.free_verified      AS p_free_verified,
+         p.free_phrase        AS p_free_phrase
     FROM matches m
     JOIN posts p ON p.id = m.post_id
     JOIN rules r ON r.id = m.rule_id
@@ -138,6 +150,7 @@ const DETAIL_SELECT = `
 function toDetail(row: DetailRow, actionsByMatch: Map<number, MatchDetail['actions']>): MatchDetail {
   const post: Post = {
     id: row.p_id,
+    kind: row.p_kind,
     fbPostId: row.p_fb_post_id,
     groupId: row.p_group_id,
     permalink: row.p_permalink,
@@ -153,6 +166,11 @@ function toDetail(row: DetailRow, actionsByMatch: Map<number, MatchDetail['actio
     locationLat: row.p_location_lat,
     locationLon: row.p_location_lon,
     distanceKm: row.p_distance_km,
+    title: row.p_title,
+    priceText: row.p_price_text,
+    priceAmount: row.p_price_amount,
+    freeVerified: row.p_free_verified === null ? null : toBool(row.p_free_verified),
+    freePhrase: row.p_free_phrase,
   };
   return {
     ...toMatch(row),

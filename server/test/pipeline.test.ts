@@ -64,6 +64,7 @@ beforeAll(() => {
     dailyCap: 20,
     maxPostAgeMin: 30,
     maxDistanceKm: null,
+    searchMarketplace: true,
     priority: 1,
     groupIds: [],
   });

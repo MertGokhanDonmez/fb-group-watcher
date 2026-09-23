@@ -1,9 +1,10 @@
-import type { RawPost } from '../../../shared/protocol.ts';
-import { execute, parseJsonArray, queryAll, queryOne } from '../db/index.ts';
-import type { Post } from '../types.ts';
+import type { MarketplaceCard, MarketplaceListing, RawPost } from '../../../shared/protocol.ts';
+import { b, execute, parseJsonArray, queryAll, queryOne, toBool } from '../db/index.ts';
+import type { Post, PostKind } from '../types.ts';
 
 interface PostRow {
   id: number;
+  kind: PostKind;
   fb_post_id: string;
   group_id: number | null;
   permalink: string;
@@ -19,11 +20,17 @@ interface PostRow {
   location_lat: number | null;
   location_lon: number | null;
   distance_km: number | null;
+  title: string | null;
+  price_text: string | null;
+  price_amount: number | null;
+  free_verified: number | null;
+  free_phrase: string | null;
 }
 
 function toPost(row: PostRow): Post {
   return {
     id: row.id,
+    kind: row.kind,
     fbPostId: row.fb_post_id,
     groupId: row.group_id,
     permalink: row.permalink,
@@ -39,6 +46,11 @@ function toPost(row: PostRow): Post {
     locationLat: row.location_lat,
     locationLon: row.location_lon,
     distanceKm: row.distance_km,
+    title: row.title,
+    priceText: row.price_text,
+    priceAmount: row.price_amount,
+    freeVerified: row.free_verified === null ? null : toBool(row.free_verified),
+    freePhrase: row.free_phrase,
   };
 }
 
@@ -167,6 +179,108 @@ export function enrichPost(
   );
   const updated = getPostByFbId(fbPostId);
   return updated ? { post: updated, textGrew } : null;
+}
+
+/* ---------- Marketplace ---------- */
+
+/** Ilan kayit anahtari. Onek, grup gonderisi kimlikleriyle cakismayi imkansiz kilar. */
+export function marketplacePostId(listingId: string): string {
+  return `mp:${listingId}`;
+}
+
+/**
+ * Arama kartini aday olarak kaydeder. Kartta aciklama olmadigi icin free_verified
+ * NULL kalir; ilan acilinca saveMarketplaceListing kaydi tamamlar.
+ * Daha once gorulduyse null doner.
+ */
+export function insertMarketplaceCard(
+  card: MarketplaceCard,
+  location: PostLocation | null = null,
+): Post | null {
+  const fbPostId = marketplacePostId(card.listingId);
+  const result = execute(
+    `INSERT OR IGNORE INTO posts (
+       kind, fb_post_id, permalink, text, image_urls, seen_at, title, price_text, price_amount,
+       location_name, location_lat, location_lon, distance_km
+     ) VALUES ('marketplace', ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    fbPostId,
+    card.url,
+    JSON.stringify(card.imageUrl ? [card.imageUrl] : []),
+    Date.now(),
+    card.title,
+    card.priceText,
+    card.priceAmount,
+    location?.name ?? null,
+    location?.lat ?? null,
+    location?.lon ?? null,
+    location?.distanceKm ?? null,
+  );
+  if (result.changes === 0) return null;
+  return getPostByFbId(fbPostId);
+}
+
+export interface FreeVerdict {
+  free: boolean;
+  phrase: string | null;
+}
+
+/**
+ * Ilan sayfasindan gelen tam kaydi yazar. Kart hic kaydedilmemisse (ornegin
+ * temizlik sonrasi gec gelen ziyaret) once olusturulur. Ilan sayfasindaki
+ * konum kartinkinden daha kesin oldugu icin bulunduysa onu ezer.
+ */
+export function saveMarketplaceListing(
+  listing: MarketplaceListing,
+  location: PostLocation | null,
+  verdict: FreeVerdict,
+): Post | null {
+  insertMarketplaceCard({
+    listingId: listing.listingId,
+    url: listing.url,
+    title: listing.title,
+    priceText: listing.priceText,
+    priceAmount: listing.priceAmount,
+    locationText: listing.locationText,
+    imageUrl: null,
+  });
+
+  const fbPostId = marketplacePostId(listing.listingId);
+  execute(
+    `UPDATE posts
+        SET text = ?,
+            title = COALESCE(?, title),
+            price_text = COALESCE(?, price_text),
+            price_amount = COALESCE(?, price_amount),
+            author_name = ?, author_profile_url = ?,
+            image_urls = CASE WHEN ? > 0 THEN ? ELSE image_urls END,
+            posted_at = COALESCE(?, posted_at),
+            posted_at_label = COALESCE(?, posted_at_label),
+            location_name = COALESCE(?, location_name),
+            location_lat = COALESCE(?, location_lat),
+            location_lon = COALESCE(?, location_lon),
+            distance_km = CASE WHEN ? IS NULL THEN distance_km ELSE ? END,
+            free_verified = ?, free_phrase = ?
+      WHERE fb_post_id = ?`,
+    listing.description,
+    listing.title,
+    listing.priceText,
+    listing.priceAmount,
+    listing.sellerName,
+    listing.sellerProfileUrl,
+    listing.imageUrls.length,
+    JSON.stringify(listing.imageUrls),
+    listing.postedAt,
+    listing.postedAtLabel,
+    location?.name ?? null,
+    location?.lat ?? null,
+    location?.lon ?? null,
+    location?.name ?? null,
+    location?.distanceKm ?? null,
+    b(verdict.free),
+    verdict.phrase,
+    fbPostId,
+  );
+  return getPostByFbId(fbPostId);
 }
 
 export function listRecentPosts(limit = 100, groupId?: number): Post[] {

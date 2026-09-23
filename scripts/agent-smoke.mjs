@@ -10,7 +10,7 @@
 import WebSocket from 'ws';
 
 const BASE = process.env.FBW_BASE ?? 'http://127.0.0.1:8787';
-const PROTOCOL_VERSION = 3;
+const PROTOCOL_VERSION = 5;
 
 const log = (...parts) => process.stdout.write(`${parts.join(' ')}\n`);
 

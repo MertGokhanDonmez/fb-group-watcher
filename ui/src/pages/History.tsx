@@ -79,12 +79,16 @@ export function History(): JSX.Element {
                     </td>
                     <td>
                       <strong>{match.ruleName}</strong>
-                      <div className="hint">{match.groupName ?? '-'}</div>
+                      <div className="hint">
+                        {match.post.kind === 'marketplace' ? 'Marketplace' : (match.groupName ?? '-')}
+                      </div>
                       <div className="hint">{match.matchedKeywords.join(', ')}</div>
                     </td>
                     <td>
                       <a href={match.post.permalink} target="_blank" rel="noreferrer">
-                        {match.post.authorName ?? 'Bilinmeyen'}
+                        {match.post.kind === 'marketplace'
+                          ? (match.post.title ?? 'Ilan')
+                          : (match.post.authorName ?? 'Bilinmeyen')}
                       </a>
                       {match.post.locationName && (
                         <div className="hint">

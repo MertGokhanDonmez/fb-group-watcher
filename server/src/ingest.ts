@@ -6,7 +6,7 @@ import { getGroupByFbId } from './repo/groups.ts';
 import { logEvent } from './repo/events.ts';
 import { enrichPost, insertPostIfNew, type PostLocation } from './repo/posts.ts';
 import { getSettings } from './repo/settings.ts';
-import { extractLocation, haversineKm } from './location/extract.ts';
+import { extractLocation, haversineKm, type ExtractOptions } from './location/extract.ts';
 import type { Post } from './types.ts';
 
 /**
@@ -14,8 +14,8 @@ import type { Post } from './types.ts';
  * Ev konumu ayarlanmamissa (0,0) mesafe hesaplanmaz - yanlis bir sayi gostermektense
  * "bilinmiyor" demek dogru; mesafe filtresi de bu durumda hicbir seyi elemez.
  */
-function resolveLocation(text: string): PostLocation | null {
-  const found = extractLocation(text);
+export function resolveLocation(text: string, options: ExtractOptions = {}): PostLocation | null {
+  const found = extractLocation(text, options);
   if (!found) return null;
 
   const settings = getSettings();

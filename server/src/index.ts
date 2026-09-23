@@ -10,6 +10,8 @@ import { ensureAgentToken } from './repo/settings.ts';
 import { seedDefaults } from './seed.ts';
 import { startWatchdog } from './watchdog.ts';
 
+const SHUTDOWN_TIMEOUT_MS = 3_000;
+
 async function main(): Promise<void> {
   initDb();
   seedDefaults();
@@ -44,10 +46,19 @@ async function main(): Promise<void> {
     ].join('\n'),
   );
 
+  let shuttingDown = false;
   const shutdown = async (): Promise<void> => {
-    await app.close();
-    closeDb();
-    process.exit(0);
+    // Ikinci Ctrl+C: kullanici beklemek istemiyor.
+    if (shuttingDown) process.exit(1);
+    shuttingDown = true;
+    // Kapanis beklenmedik bir yerde takilirsa surec asili kalmasin.
+    setTimeout(() => process.exit(1), SHUTDOWN_TIMEOUT_MS).unref();
+    try {
+      await app.close();
+    } finally {
+      closeDb();
+      process.exit(0);
+    }
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);

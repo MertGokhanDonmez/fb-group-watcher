@@ -22,12 +22,26 @@ function placeLabel(post: Post): string | undefined {
   return post.distanceKm === null ? post.locationName : `${post.locationName} · ${post.distanceKm} km`;
 }
 
+/** Marketplace ilani icin baslik, fiyat ve bedava karari; grup gonderisi icin yazar. */
+function postTitle(post: Post): string {
+  if (post.kind !== 'marketplace') return post.authorName ?? 'Bilinmeyen yazar';
+  const parts = [`Marketplace: ${post.title ?? '-'}`];
+  if (post.priceText) parts.push(post.priceText);
+  parts.push(post.freeVerified ? `bedava ("${post.freePhrase ?? '-'}")` : 'aciklamada bedava yok');
+  return parts.join(' · ');
+}
+
+/** Henuz acilmamis Marketplace adayi akisa girmez: aciklamasi yok, bedava karari verilmedi. */
+function isFeedworthy(post: Post): boolean {
+  return post.kind !== 'marketplace' || post.freeVerified !== null;
+}
+
 function postEntry(post: Post): FeedEntry {
   return {
     key: `post-${post.id}`,
     at: post.seenAt,
     kind: 'post',
-    title: post.authorName ?? 'Bilinmeyen yazar',
+    title: postTitle(post),
     text: truncate(post.text) || '(metin yok)',
     link: post.permalink,
     place: placeLabel(post),
@@ -62,7 +76,9 @@ export function Dashboard({ status, onStatusChange }: Props): JSX.Element {
   const streamConnected = useStream(
     useCallback(
       (event: StreamEvent) => {
-        if (event.type === 'post') push(postEntry(event.post));
+        if (event.type === 'post') {
+          if (isFeedworthy(event.post)) push(postEntry(event.post));
+        }
         else if (event.type === 'match') push(matchEntry(event.match));
         else if (event.type === 'log') {
           push({
@@ -83,7 +99,9 @@ export function Dashboard({ status, onStatusChange }: Props): JSX.Element {
   useEffect(() => {
     void (async () => {
       const [posts, matches] = await Promise.all([api.listPosts(30), api.listMatches(30)]);
-      const initial = [...posts.map(postEntry), ...matches.map(matchEntry)].sort((a, b) => b.at - a.at);
+      const initial = [...posts.filter(isFeedworthy).map(postEntry), ...matches.map(matchEntry)].sort(
+        (a, b) => b.at - a.at,
+      );
       setFeed(initial.slice(0, MAX_FEED));
     })();
   }, []);

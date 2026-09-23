@@ -55,6 +55,71 @@ export async function sendTelegramMessage(
   }
 }
 
+interface TelegramChat {
+  id: number;
+  type?: string;
+  title?: string;
+  username?: string;
+  first_name?: string;
+  last_name?: string;
+}
+
+interface TelegramUpdate {
+  message?: { chat?: TelegramChat };
+  edited_message?: { chat?: TelegramChat };
+  channel_post?: { chat?: TelegramChat };
+  my_chat_member?: { chat?: TelegramChat };
+}
+
+export type ChatLookupResult =
+  | { ok: true; chatId: string; name: string }
+  | { ok: false; error: string };
+
+function chatName(chat: TelegramChat): string {
+  const fullName = [chat.first_name, chat.last_name].filter(Boolean).join(' ');
+  return chat.title ?? (fullName || (chat.username ? `@${chat.username}` : String(chat.id)));
+}
+
+/**
+ * Bota en son yazan sohbeti bulur; chat ID'yi elle ogrenme zahmetini kaldirir.
+ *
+ * getUpdates yalnizca bota gelen ve henuz onaylanmamis mesajlari doner (en fazla
+ * 24 saat). Onaylamak icin offset gondermiyoruz, yani bu cagri mesajlari tuketmez.
+ * Bot bir webhook'a bagliysa Telegram getUpdates'i 409 ile reddeder.
+ */
+export async function findLatestChat(botToken: string): Promise<ChatLookupResult> {
+  if (botToken.trim() === '') return { ok: false, error: 'Once bot token girilmeli' };
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${botToken.trim()}/getUpdates`, {
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      const detail = await telegramErrorDetail(response);
+      return { ok: false, error: `Telegram API ${response.status}: ${detail}` };
+    }
+    const body = (await response.json()) as { result?: TelegramUpdate[] };
+    const chats = (body.result ?? [])
+      .map(
+        (update) =>
+          update.message?.chat ??
+          update.edited_message?.chat ??
+          update.channel_post?.chat ??
+          update.my_chat_member?.chat,
+      )
+      .filter((chat): chat is TelegramChat => typeof chat?.id === 'number');
+    const latest = chats.at(-1);
+    if (!latest) {
+      return {
+        ok: false,
+        error: "Bota gelen mesaj yok. Telegram'da botunu acip Start'a bas veya bir mesaj at, sonra tekrar dene.",
+      };
+    }
+    return { ok: true, chatId: String(latest.id), name: chatName(latest) };
+  } catch (error) {
+    return { ok: false, error: `Telegram'a ulasilamadi: ${String(error)}` };
+  }
+}
+
 /** Hata govdesindeki "description" alani tek anlasilir kisimdir (orn. "chat not found"). */
 async function telegramErrorDetail(response: Response): Promise<string> {
   try {
@@ -77,8 +142,10 @@ export function formatMatchMessage(detail: MatchDetail): string {
   const lines: string[] = [];
   lines.push(`\u{1F3AF} <b>${escapeHtml(detail.ruleName)}</b>`);
 
+  const marketplace = detail.post.kind === 'marketplace';
   const meta: string[] = [];
-  if (detail.groupName) meta.push(detail.groupName);
+  if (marketplace) meta.push('Marketplace');
+  else if (detail.groupName) meta.push(detail.groupName);
   if (detail.post.locationName) {
     meta.push(
       detail.post.distanceKm !== null
@@ -88,9 +155,17 @@ export function formatMatchMessage(detail: MatchDetail): string {
   }
   if (meta.length > 0) lines.push(`\u{1F4CD} ${escapeHtml(meta.join(' • '))}`);
 
+  if (marketplace && detail.post.title) {
+    const price = detail.post.priceText ? ` · ${detail.post.priceText}` : '';
+    lines.push(`<b>${escapeHtml(detail.post.title + price)}</b>`);
+  }
   if (detail.post.authorName) lines.push(`\u{1F464} ${escapeHtml(detail.post.authorName)}`);
   if (detail.matchedKeywords.length > 0) {
     lines.push(`<i>${escapeHtml(detail.matchedKeywords.join(', '))}</i>`);
+  }
+  // Bedava kararinin dayanagi; yanlis pozitif oldugunda neden eslestigi hemen gorunsun.
+  if (marketplace && detail.post.freePhrase) {
+    lines.push(`<i>aciklamada: "${escapeHtml(detail.post.freePhrase)}"</i>`);
   }
 
   const text = detail.post.text.trim();
@@ -99,7 +174,8 @@ export function formatMatchMessage(detail: MatchDetail): string {
     lines.push('', escapeHtml(excerpt));
   }
 
-  lines.push('', `<a href="${escapeHtml(detail.post.permalink)}">Gonderiyi ac</a>`);
+  const linkLabel = marketplace ? 'Ilani ac' : 'Gonderiyi ac';
+  lines.push('', `<a href="${escapeHtml(detail.post.permalink)}">${linkLabel}</a>`);
   return lines.join('\n');
 }
 

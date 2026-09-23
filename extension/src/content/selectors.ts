@@ -83,6 +83,57 @@ export const BLOCK_PHRASES: { kind: 'rate_limit' | 'checkpoint'; phrases: string
   },
 ];
 
+/* ---------- Marketplace ---------- */
+
+/**
+ * Marketplace sayfa bilgisi.
+ *
+ * DIKKAT: Bu bolum gercek bir sayfa snapshot'i olmadan yazildi; yapisal varsayimlar
+ * (ilan kutusunun ilana giden bir baglanti olmasi, ilan sayfasinda gomulu JSON
+ * bulunmasi) gercek HTML ile dogrulanmali. Onarim yine yalnizca burada yapilir.
+ */
+export const MARKETPLACE = {
+  /** Arama sonucundaki her ilan kutusu, ilan sayfasina giden bir baglantidir. */
+  itemLink: 'a[href*="/marketplace/item/"]',
+  /** Ilan sayfasi kapsayicisi: aramadan tiklaninca dialog, adresle acilinca main. */
+  itemScope: ['div[role="dialog"]', 'div[role="main"]'],
+  title: ['h1'],
+  sellerLink: 'a[href*="/marketplace/profile/"]',
+  /** Sayfaya gomulu veri bloklari. Aciklamanin kisaltilmamis hali buradadir. */
+  dataScripts: 'script[type="application/json"]',
+} as const;
+
+/**
+ * Gomulu JSON'daki alan adlari. Bunlar Facebook'un GraphQL sema adlari; DOM'dan
+ * cok daha kararli ve aciklamayi "Devamini gor" kirpmasi olmadan tasiyorlar.
+ */
+export const MARKETPLACE_JSON_KEYS = {
+  description: 'redacted_description',
+  title: 'marketplace_listing_title',
+  price: 'formatted_price',
+  location: 'location_text',
+  creationTime: 'creation_time',
+} as const;
+
+/** Fiyat satirini tanir: para birimli tutar veya tek basina bedava etiketi. */
+export const PRICE_LINE_PATTERN =
+  /^(?:\d[\d\s.,]*\s*(?:kč|kc|czk|€|eur|\$|usd|zł|pln|tl|₺|lei|ft|huf)\.?|(?:czk|€|eur|\$|usd|pln|tl|₺)\s*\d[\d\s.,]*|zdarma|free|bedava|ücretsiz|gratis|kostenlos|zadarmo)$/iu;
+
+/** Uzun aciklamayi acan dugme metinleri (kucuk harf). */
+export const SEE_MORE_TEXTS = [
+  'see more',
+  'zobrazit více',
+  'zobrazit vice',
+  'zobraziť viac',
+  'pokaż więcej',
+  'mehr anzeigen',
+  'daha fazlasını gör',
+  'devamını gör',
+];
+
+/** Ilanin yayinlanma zamanini tasiyan satirin isaretleri ("Listed 2 hours ago"). */
+export const LISTED_MARKERS = ['listed', 'zveřejněno', 'přidáno', 'listelendi', 'önce', 'ago', 'eingestellt'];
+
 /** Bir kapsayicida secici listesini sirayla dener, ilk bulunani doner. */
 export function queryFirst(root: ParentNode, selectors: readonly string[]): HTMLElement | null {
   for (const selector of selectors) {
