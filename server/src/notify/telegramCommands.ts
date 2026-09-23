@@ -334,6 +334,7 @@ async function runCommand(text: string): Promise<string> {
         actionDm: false,
         actionNotify: true,
         requireApproval: true,
+        searchMarketplace: false,
         commentTemplateId: null,
         dmTemplateId: null,
         dailyCap: 20,
