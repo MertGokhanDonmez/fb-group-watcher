@@ -1,21 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, type Group, type Rule, type Template } from '../api.ts';
 import { parseList } from '../format.ts';
-
-/**
- * Bedava esya gruplarinda satis ve "arayan" ilanlarini elemek icin baslangic seti.
- * Gruplar agirlikli olarak Ingilizce oldugu icin terimler Ingilizce.
- */
-const SUGGESTED_EXCLUDES = [
-  'for sale',
-  'selling',
-  'swap',
-  'trade',
-  'wanted',
-  'looking for',
-  'iso',
-  'rent',
-];
+import { SUGGESTED_EXCLUDE_KEYWORDS as SUGGESTED_EXCLUDES } from '../../../shared/rules.ts';
 
 export function Rules(): JSX.Element {
   const [rules, setRules] = useState<Rule[]>([]);

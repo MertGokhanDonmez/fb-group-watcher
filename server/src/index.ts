@@ -5,6 +5,7 @@ import { closeDb, initDb } from './db/index.ts';
 import { requeueStuckActions } from './repo/actions.ts';
 import { logEvent } from './repo/events.ts';
 import { startTelegramAlarms } from './notify/telegram.ts';
+import { startTelegramCommands } from './notify/telegramCommands.ts';
 import { ensureAgentToken } from './repo/settings.ts';
 import { seedDefaults } from './seed.ts';
 import { startWatchdog } from './watchdog.ts';
@@ -24,6 +25,8 @@ async function main(): Promise<void> {
   startWatchdog();
   // Kritik alarmlar (eklenti cevrimdisi, selector bozulmasi, engel) Telegram'a da gider.
   startTelegramAlarms();
+  // Kural/grup yonetimi Telegram komutlariyla da yapilabilir (/yardim).
+  startTelegramCommands();
   await app.listen({ host: CONFIG.host, port: CONFIG.port });
 
   const uiHint = fs.existsSync(CONFIG.publicDir)
