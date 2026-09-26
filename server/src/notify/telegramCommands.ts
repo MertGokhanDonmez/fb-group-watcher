@@ -42,6 +42,7 @@ const HELP_TEXT = [
   '/kural_ekle isim | kelime1, kelime2 [| haric1, haric2]',
   '  (haric verilmezse panel ile ayni varsayilan liste kullanilir: for sale, selling, swap, trade, wanted, looking for, iso, rent)',
   '/kural_ac id  /kural_kapat id  /kural_sil id',
+  '/kural_market id ac|kapat - marketplace aramasini ac/kapat (yeni kurallarda varsayilan acik)',
   '',
   '<b>Gruplar</b>',
   '/gruplar - liste',
@@ -86,8 +87,9 @@ function formatRules(): string {
   return rules
     .map((rule) => {
       const state = rule.enabled ? '✅' : '⏸️';
+      const market = rule.searchMarketplace ? '🛒 marketplace: acik' : '🛒 marketplace: kapali';
       const keywords = rule.includeKeywords.join(', ') || '(kelime yok)';
-      return `${state} <b>#${rule.id} ${escapeHtml(rule.name)}</b>\n${escapeHtml(keywords)}`;
+      return `${state} <b>#${rule.id} ${escapeHtml(rule.name)}</b>\n${market}\n${escapeHtml(keywords)}`;
     })
     .join('\n\n');
 }
@@ -334,7 +336,7 @@ async function runCommand(text: string): Promise<string> {
         actionDm: false,
         actionNotify: true,
         requireApproval: true,
-        searchMarketplace: false,
+        searchMarketplace: true,
         commentTemplateId: null,
         dmTemplateId: null,
         dailyCap: 20,
@@ -356,6 +358,20 @@ async function runCommand(text: string): Promise<string> {
       if (!updated) return `#${id} numarali kural bulunamadi`;
       pushConfigToAgent();
       return `#${id} ${enabled ? 'etkinlestirildi' : 'devre disi birakildi'}`;
+    }
+
+    case '/kural_market': {
+      const [idRaw, stateRaw] = args.split(/\s+/);
+      const id = parseIdArg(idRaw ?? '');
+      const state = (stateRaw ?? '').toLowerCase();
+      if (id === null || (state !== 'ac' && state !== 'kapat')) {
+        return 'Kullanim: /kural_market id ac  (veya /kural_market id kapat)';
+      }
+      const searchMarketplace = state === 'ac';
+      const updated = updateRule(id, { searchMarketplace });
+      if (!updated) return `#${id} numarali kural bulunamadi`;
+      pushConfigToAgent();
+      return `#${id} marketplace aramasi ${searchMarketplace ? 'ACIK' : 'kapali'}`;
     }
 
     case '/kural_sil': {
